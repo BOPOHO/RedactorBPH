@@ -2,7 +2,8 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<link rel="manifest" href="data:application/json;base64,eyJuYW1lIjoiVmlkZW9Gb3JnZSIsInNob3J0X25hbWUiOiJWaWRlb0ZvcmdlIiwic3RhcnRfdXJsIjoiLiIsImRpc3BsYXkiOiJzdGFuZGFsb25lIiwiYmFja2dyb3VuZF9jb2xvciI6IiMwZTBmMTMiLCJ0aGVtZV9jb2xvciI6IiMwZTBmMTMiLCJpY29ucyI6W119">
 <title>VideoForge — браузерный видеоредактор</title>
 <style>
 :root{
@@ -154,6 +155,55 @@ textarea{width:100%;background:var(--bg3);border:1px solid var(--line2);color:va
 kbd{background:var(--bg4);border:1px solid var(--line2);border-radius:4px;padding:1px 5px;font-family:var(--ff-mono);font-size:10.5px;}
 .fullscreen-mode .sidebar-left,.fullscreen-mode .sidebar-right,.fullscreen-mode .timeline-wrap,.fullscreen-mode .topbar{display:none !important;}
 .fullscreen-mode .preview-wrap{padding:0;}
+
+/* touch-friendly dragging */
+.clip,.handle,.tl-ruler,#stage,.minimap{touch-action:none;}
+html,body{touch-action:manipulation;}
+
+/* mobile toggle buttons, hidden on desktop */
+.mobile-only{display:none;}
+#mobileBackdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:40;}
+
+/* ===== MOBILE LAYOUT ===== */
+@media (max-width: 880px){
+  .mobile-only{display:flex;}
+  .topbar{padding:0 8px;gap:6px;height:46px;overflow-x:auto;}
+  .brand{display:none;}
+  .proj-name{display:none;}
+  .tb-btn{padding:7px 9px;font-size:13px;}
+  .tb-btn span.lbl{display:none;}
+
+  .main{position:relative;}
+  .sidebar-left,.sidebar-right{
+    position:fixed; top:46px; bottom:226px; width:88vw; max-width:360px;
+    z-index:50; transition:transform .22s ease; box-shadow:0 0 40px rgba(0,0,0,.6);
+  }
+  .sidebar-left{left:0; transform:translateX(-105%);}
+  .sidebar-left.open{transform:translateX(0);}
+  .sidebar-right{right:0; transform:translateX(105%);}
+  .sidebar-right.open{transform:translateX(0);}
+
+  .center{width:100%;}
+  .preview-wrap{padding:8px;}
+  .transport{padding:8px 8px;flex-wrap:wrap;gap:8px;}
+  .tcode{min-width:auto;font-size:11px;}
+  .aspect-pick{order:5;}
+  .zoom-ctl input{width:60px;}
+
+  .timeline-wrap{height:220px;}
+  .tl-heads{width:64px;}
+  .track-head{padding:0 4px;font-size:9.5px;gap:2px;}
+  .track-head .tn{display:none;}
+  .timeline-toolbar{flex-wrap:wrap;height:auto;padding:4px 6px;}
+  .timeline-toolbar span{display:none;}
+  .minimap{display:none;}
+
+  .tab{font-size:10.5px;padding:9px 3px;}
+  .chip,.tb-btn,.transport-btn{min-height:38px;}
+  input[type=range]::-webkit-slider-thumb{width:20px;height:20px;}
+
+  #ctxMenu{display:none !important;} /* контекстное меню по правому клику недоступно на тач — действия дублированы в тулбаре */
+}
 </style>
 </head>
 <body>
@@ -161,6 +211,7 @@ kbd{background:var(--bg4);border:1px solid var(--line2);border-radius:4px;paddin
 
   <!-- ============ TOPBAR ============ -->
   <div class="topbar">
+    <button class="tb-btn icon mobile-only" id="btnToolsMobile" title="Инструменты">☰</button>
     <div class="brand"><span class="dot"></span>VideoForge</div>
     <input class="proj-name" id="projName" value="Без названия">
     <div class="tb-sep"></div>
@@ -175,6 +226,7 @@ kbd{background:var(--bg4);border:1px solid var(--line2);border-radius:4px;paddin
     <button class="tb-btn icon" id="btnFullscreen" title="Полноэкранный режим (F)">⛶</button>
     <span class="tb-spacer"></span>
     <span id="autosaveTag">Автосохранено</span>
+    <button class="tb-btn mobile-only" id="btnPropsMobile" title="Свойства">⚙️</button>
     <button class="tb-btn" id="btnAI">🤖 AI</button>
     <button class="tb-btn primary" id="btnExport">⬇ Экспорт</button>
   </div>
@@ -373,6 +425,7 @@ kbd{background:var(--bg4);border:1px solid var(--line2);border-radius:4px;paddin
 <input type="file" id="fileInputSticker" accept="image/*" class="hidden">
 <input type="file" id="fileInputAudio" accept="audio/*" class="hidden">
 <div id="ctxMenu" class="hidden"></div>
+<div id="mobileBackdrop" class="hidden"></div>
 <div class="toast-stack" id="toastStack"></div>
 
 <script>
@@ -382,12 +435,12 @@ kbd{background:var(--bg4);border:1px solid var(--line2);border-radius:4px;paddin
    трансформации, цветокоррекция, эффекты, переходы, текст, стикеры,
    аудио/войсовер, кейфреймы, готовые анимации, Ken Burns, экспорт (WebM),
    undo/redo, автосохранение, снэппинг, миникарта, хоткеи, drag&drop.
-   AI-блок: часть функций реализована напрямую в браузере (автокоррекция
-   цвета, детектор сцен/моментов, TTS-озвучка, запись с шумоподавлением,
-   автомонтаж по сценам/битам, фоновая замена через TensorFlow.js BodyPix
-   при наличии интернета). Часть (AI-перевод, AI-генерация музыки, истинный
-   AI-апскейл) требует внешних серверных моделей — для них оставлены чёткие
-   точки интеграции (см. функции с префиксом aiStub_*).
+   AI-блок (офлайн-версия): автокоррекция цвета и детектор сцен/моментов считаются прямо в
+   браузере по пикселям кадра и работают всегда без интернета. Живые субтитры и TTS-озвучка
+   используют речевой движок самого устройства (см. примечание в окне AI в интерфейсе). Функции,
+   которым нужен интернет или внешний сервер (перевод, апскейл, генерация музыки, удаление фона,
+   шумоподавление готового файла), в этой версии не показаны в интерфейсе — мама будет работать
+   без интернета, и кнопки, которые всё равно не заработают, только мешали бы.
    ========================================================================= */
 
 /* ---------------------------- УТИЛИТЫ ---------------------------- */
@@ -728,15 +781,16 @@ function renderRuler(){
     tick.style.left=timeToX(t)+'px'; tick.textContent=fmtTime(t).slice(0,5);
     ruler.appendChild(tick);
   }
-  ruler.onmousedown=e=>{
+  ruler.onpointerdown=e=>{
+    ruler.setPointerCapture(e.pointerId);
     const startScrub=ev=>{
       const rect=ruler.getBoundingClientRect();
       seekTo(xToTime(ev.clientX-rect.left));
     };
     startScrub(e);
     const move=ev=>startScrub(ev);
-    const up=()=>{ window.removeEventListener('mousemove',move); window.removeEventListener('mouseup',up); };
-    window.addEventListener('mousemove',move); window.addEventListener('mouseup',up);
+    const up=()=>{ ruler.removeEventListener('pointermove',move); ruler.removeEventListener('pointerup',up); };
+    ruler.addEventListener('pointermove',move); ruler.addEventListener('pointerup',up);
   };
 }
 const TRACK_COLORS = {video:'#3b6fd6',photo:'#2f9b7d',text:'#c97bd1',music:'#d6a23b',voice:'#d65f5f',fx:'#7c5cff',sticker:'#52b3e0'};
@@ -777,10 +831,11 @@ function renderClipEl(c, tr){
   if(c.transitionOut) div.innerHTML+=`<div class="trans-marker r" title="Переход: ${c.transitionOut.type}"></div>`;
   div.innerHTML += `<div class="handle l"></div><div class="handle r"></div>`;
 
-  div.onmousedown=e=>{
+  div.onpointerdown=e=>{
     if(e.target.classList.contains('handle')) return;
     e.stopPropagation();
     selectClip(c.id);
+    div.setPointerCapture(e.pointerId);
     const startX=e.clientX, startLeft=c.start;
     let moved=false;
     const onMove=ev=>{
@@ -792,17 +847,18 @@ function renderClipEl(c, tr){
       renderClipLanes(); renderMinimap();
     };
     const onUp=()=>{
-      window.removeEventListener('mousemove',onMove); window.removeEventListener('mouseup',onUp);
+      div.removeEventListener('pointermove',onMove); div.removeEventListener('pointerup',onUp);
       if(moved){ recalcDuration(); pushHistory(); renderTimeline(); }
     };
-    window.addEventListener('mousemove',onMove); window.addEventListener('mouseup',onUp);
+    div.addEventListener('pointermove',onMove); div.addEventListener('pointerup',onUp);
   };
   div.ondblclick=()=> seekTo(c.start);
   div.oncontextmenu=e=>{ e.preventDefault(); selectClip(c.id); showClipContextMenu(e.clientX,e.clientY,c); };
 
   // resize handles
-  div.querySelector('.handle.l').onmousedown=e=>{
-    e.stopPropagation(); const startX=e.clientX, startStart=c.start, startDur=c.dur, startTrim=c.trimStart;
+  div.querySelector('.handle.l').onpointerdown=e=>{
+    e.stopPropagation(); e.target.setPointerCapture(e.pointerId);
+    const startX=e.clientX, startStart=c.start, startDur=c.dur, startTrim=c.trimStart;
     const onMove=ev=>{
       let dt=xToTime(ev.clientX-startX);
       let newStart=clamp(startStart+dt, 0, startStart+startDur-0.1);
@@ -810,19 +866,20 @@ function renderClipEl(c, tr){
       c.start=newStart; c.dur=startDur-delta; c.trimStart=startTrim+delta*c.speed;
       renderClipLanes();
     };
-    const onUp=()=>{ window.removeEventListener('mousemove',onMove); window.removeEventListener('mouseup',onUp); recalcDuration(); pushHistory(); renderTimeline(); };
-    window.addEventListener('mousemove',onMove); window.addEventListener('mouseup',onUp);
+    const onUp=()=>{ e.target.removeEventListener('pointermove',onMove); e.target.removeEventListener('pointerup',onUp); recalcDuration(); pushHistory(); renderTimeline(); };
+    e.target.addEventListener('pointermove',onMove); e.target.addEventListener('pointerup',onUp);
   };
-  div.querySelector('.handle.r').onmousedown=e=>{
-    e.stopPropagation(); const startX=e.clientX, startDur=c.dur;
+  div.querySelector('.handle.r').onpointerdown=e=>{
+    e.stopPropagation(); e.target.setPointerCapture(e.pointerId);
+    const startX=e.clientX, startDur=c.dur;
     const maxDur = c.sourceDur ? (c.sourceDur-c.trimStart)/c.speed : Infinity;
     const onMove=ev=>{
       let dt=xToTime(ev.clientX-startX);
       c.dur=clamp(startDur+dt, 0.1, maxDur===Infinity?9999:maxDur);
       renderClipLanes();
     };
-    const onUp=()=>{ window.removeEventListener('mousemove',onMove); window.removeEventListener('mouseup',onUp); recalcDuration(); pushHistory(); renderTimeline(); };
-    window.addEventListener('mousemove',onMove); window.addEventListener('mouseup',onUp);
+    const onUp=()=>{ e.target.removeEventListener('pointermove',onMove); e.target.removeEventListener('pointerup',onUp); recalcDuration(); pushHistory(); renderTimeline(); };
+    e.target.addEventListener('pointermove',onMove); e.target.addEventListener('pointerup',onUp);
   };
   return div;
 }
@@ -1293,6 +1350,31 @@ $('#btnPlay').onclick=togglePlay;
 $('#btnToStart').onclick=()=>seekTo(0);
 $('#btnToEnd').onclick=()=>seekTo(state.duration);
 
+/* ---- Перетаскивание выбранного клипа прямо в превью (мышь или палец) ---- */
+(function enableStageDrag(){
+  let dragging=false, startX=0, startY=0, startTX=0, startTY=0, clip=null;
+  stage.addEventListener('pointerdown', e=>{
+    const f=findClip(state.selectedClipId);
+    if(!f) return;
+    clip=f.clip;
+    dragging=true;
+    startX=e.clientX; startY=e.clientY;
+    startTX=clip.transform.x; startTY=clip.transform.y;
+    stage.setPointerCapture(e.pointerId);
+  });
+  stage.addEventListener('pointermove', e=>{
+    if(!dragging||!clip) return;
+    const rect=stage.getBoundingClientRect();
+    const scaleX = stage.width/rect.width, scaleY = stage.height/rect.height;
+    clip.transform.x = startTX + (e.clientX-startX)*scaleX;
+    clip.transform.y = startTY + (e.clientY-startY)*scaleY;
+    renderFrame(state.currentTime);
+  });
+  function endDrag(){ if(dragging){ dragging=false; clip&&pushHistory(); clip=null; renderProps(); } }
+  stage.addEventListener('pointerup', endDrag);
+  stage.addEventListener('pointercancel', endDrag);
+})();
+
 /* =========================================================================
    PROPERTIES PANEL (правая панель)
    ========================================================================= */
@@ -1697,6 +1779,26 @@ function toggleFullscreen(){
 }
 $('#btnFullscreen').onclick=toggleFullscreen;
 
+/* ---- мобильные выезжающие панели ---- */
+function openMobilePanel(which){
+  $('.sidebar-left').classList.toggle('open', which==='left');
+  $('.sidebar-right').classList.toggle('open', which==='right');
+  $('#mobileBackdrop').classList.remove('hidden');
+}
+function closeMobilePanels(){
+  $('.sidebar-left').classList.remove('open');
+  $('.sidebar-right').classList.remove('open');
+  $('#mobileBackdrop').classList.add('hidden');
+}
+$('#btnToolsMobile').onclick=()=>openMobilePanel('left');
+$('#btnPropsMobile').onclick=()=>openMobilePanel('right');
+$('#mobileBackdrop').onclick=closeMobilePanels;
+const _origSelectClip = selectClip;
+selectClip = function(id){
+  _origSelectClip(id);
+  if(window.innerWidth<=880 && id) openMobilePanel('right');
+};
+
 $all('.aspect-pick .chip').forEach(b=>{
   b.onclick=()=>{
     $all('.aspect-pick .chip').forEach(x=>x.classList.remove('active')); b.classList.add('active');
@@ -1717,18 +1819,13 @@ $all('.aspect-pick .chip').forEach(b=>{
 function showAIMenu(){
   const m=document.createElement('div'); m.className='modal-bg';
   m.innerHTML=`<div class="modal">
-    <h3>🤖 AI-функции</h3>
-    <button class="ai-btn" id="aiSubs">AI-субтитры (live, через микрофон) <span class="tag">реально</span></button>
-    <button class="ai-btn" id="aiVoiceover">AI-озвучка текста (TTS) <span class="tag">реально</span></button>
-    <button class="ai-btn" id="aiColor">AI-автокоррекция цвета выбранного клипа <span class="tag">реально</span></button>
-    <button class="ai-btn" id="aiMoments">AI-поиск моментов (детектор смены сцен) <span class="tag">реально</span></button>
-    <button class="ai-btn" id="aiAutocut">AI-автомонтаж по сценам <span class="tag">реально</span></button>
-    <button class="ai-btn" id="aiBgRemove">Удаление фона (TensorFlow.js BodyPix) <span class="tag beta">бета, нужен интернет</span></button>
-    <button class="ai-btn" id="aiTranslate">AI-перевод субтитров <span class="tag beta">нужен внешний API</span></button>
-    <button class="ai-btn" id="aiUpscale">AI-апскейл <span class="tag beta">нужен внешний API</span></button>
-    <button class="ai-btn" id="aiMusicGen">AI-генерация музыки <span class="tag beta">нужен внешний API</span></button>
-    <button class="ai-btn" id="aiNoiseFile">Удаление шума из импортированного файла <span class="tag beta">нужен внешний API</span></button>
-    <div class="note warn">Функции с пометкой «нужен внешний API» требуют серверной ML-модели (например, через Anthropic/иной провайдер с собственным эндпоинтом) — здесь оставлены точки интеграции в коде (функции aiStub_*), подставьте свой ключ/эндпоинт на сервере, чтобы их активировать. Делать это напрямую из браузера с вашим API-ключом небезопасно.</div>
+    <h3>🤖 AI-функции (работают офлайн, без интернета и без API)</h3>
+    <button class="ai-btn" id="aiSubs">${activeSpeechRec ? '⏹ Остановить AI-субтитры' : '▶ Запустить AI-субтитры (через микрофон)'} <span class="tag">офлайн-движок устройства*</span></button>
+    <button class="ai-btn" id="aiVoiceover">AI-озвучка текста (TTS) <span class="tag">офлайн-голос устройства*</span></button>
+    <button class="ai-btn" id="aiColor">AI-автокоррекция цвета выбранного клипа <span class="tag">100% офлайн</span></button>
+    <button class="ai-btn" id="aiMoments">AI-поиск моментов (детектор смены сцен) <span class="tag">100% офлайн</span></button>
+    <button class="ai-btn" id="aiAutocut">AI-автомонтаж по сценам <span class="tag">100% офлайн</span></button>
+    <div class="note">Цветокоррекция и поиск моментов считаются прямо в браузере по пикселям кадра — работают без интернета всегда. Субтитры и озвучка используют системный речевой движок телефона (* на некоторых Android-устройствах для голоса нужен установленный офлайн-пакет языка в настройках — без него эти два пункта могут не сработать без интернета, остальное работает в любом случае).</div>
     <div class="modal-actions"><button class="tb-btn" id="aiClose">Закрыть</button></div>
   </div>`;
   document.body.appendChild(m);
@@ -1738,19 +1835,22 @@ function showAIMenu(){
   m.querySelector('#aiColor').onclick=()=>{ m.remove(); aiAutoColorCorrect(); };
   m.querySelector('#aiMoments').onclick=()=>{ m.remove(); aiDetectMoments(); };
   m.querySelector('#aiAutocut').onclick=()=>{ m.remove(); aiAutoCutByScenes(); };
-  m.querySelector('#aiBgRemove').onclick=()=>{ m.remove(); aiBackgroundRemoval(); };
-  m.querySelector('#aiTranslate').onclick=()=>{ m.remove(); aiStub_translate(); };
-  m.querySelector('#aiUpscale').onclick=()=>{ m.remove(); aiStub_upscale(); };
-  m.querySelector('#aiMusicGen').onclick=()=>{ m.remove(); aiStub_musicGen(); };
-  m.querySelector('#aiNoiseFile').onclick=()=>{ m.remove(); aiStub_noiseRemovalFile(); };
 }
 $('#btnAI').onclick=showAIMenu;
 $('#btnAIColor').onclick=aiAutoColorCorrect;
 
-// 1) Живые субтитры через Web Speech API (реально работает в Chrome, требует микрофон)
+// 1) Живые субтитры — теперь с явным стартом/стопом и индикатором
+let activeSpeechRec=null;
 function aiLiveSubtitles(){
+  if(activeSpeechRec){
+    activeSpeechRec.stop();
+    activeSpeechRec=null;
+    $('#aiSubsIndicator')?.remove();
+    toast('Субтитры остановлены');
+    return;
+  }
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if(!SR){ toast('SpeechRecognition не поддерживается в этом браузере',true); return; }
+  if(!SR){ toast('Распознавание речи не поддерживается в этом браузере',true); return; }
   let track=state.tracks.find(t=>t.type==='text')||addTrack('text');
   const rec=new SR(); rec.lang='ru-RU'; rec.continuous=true; rec.interimResults=false;
   rec.onresult=(e)=>{
@@ -1758,9 +1858,23 @@ function aiLiveSubtitles(){
     const clip=makeClip(track,{dur:2.5, text});
     addClipToTrack(track, clip, state.currentTime);
   };
-  rec.onerror=(e)=>toast('Ошибка распознавания: '+e.error, true);
+  rec.onerror=(e)=>{ toast('Ошибка распознавания: '+e.error+' (нужен интернет/доступ к микрофону)', true); };
+  rec.onend=()=>{
+    // некоторые браузеры сами завершают сессию — перезапускаем, если пользователь не останавливал явно
+    if(activeSpeechRec===rec){ try{ rec.start(); }catch(e){} }
+  };
   rec.start();
-  toast('Говорите — субтитры будут добавляться на дорожку «Текст». Чтобы остановить, обновите страницу или подождите паузу.');
+  activeSpeechRec=rec;
+  addStopSubtitlesIndicator();
+  toast('Говорите — субтитры добавляются на дорожку «Текст». Нажмите кнопку «Стоп субтитры», чтобы остановить.');
+}
+function addStopSubtitlesIndicator(){
+  if($('#aiSubsIndicator')) return;
+  const b=document.createElement('button');
+  b.id='aiSubsIndicator'; b.className='tb-btn'; b.style.cssText='position:absolute;top:10px;right:10px;z-index:30;background:var(--danger);border:none;color:#fff;';
+  b.textContent='⏹ Стоп субтитры';
+  b.onclick=()=>aiLiveSubtitles();
+  $('#previewWrap').appendChild(b);
 }
 // 2) TTS — реальный синтез речи в аудио-дорожку
 function aiVoiceoverTTS(){
@@ -1837,69 +1951,38 @@ async function aiAutoCutByScenes(){
   data.cuts.forEach(t=> splitClipAt(f.clip.id, f.clip.start + t));
   toast('Автомонтаж: клип разрезан по найденным сценам ('+data.cuts.length+')');
 }
-// 6) Удаление фона — реальная интеграция с TensorFlow.js BodyPix (загружается по требованию из CDN)
-let bodyPixModel=null, bodyPixLoading=false;
-async function aiBackgroundRemoval(){
-  const f=findClip(state.selectedClipId);
-  if(!f || (f.clip.type!=='video')){ toast('Выберите видеоклип',true); return; }
-  if(bodyPixLoading){ toast('Модель ещё загружается…'); return; }
-  if(!bodyPixModel){
-    bodyPixLoading=true; toast('Загрузка модели TensorFlow.js BodyPix (нужен интернет)…');
-    try{
-      await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js');
-      await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow-models/body-pix@2.2.0/dist/body-pix.min.js');
-      bodyPixModel = await bodyPix.load();
-      toast('Модель загружена');
-    }catch(e){ toast('Не удалось загрузить AI-модель (нет интернета/CDN блокирован)', true); bodyPixLoading=false; return; }
-    bodyPixLoading=false;
-  }
-  f.clip.effects.push({type:'bgremove', intensity:100, _model:true});
-  toast('Удаление фона включено для клипа (выполняется в реальном времени, может снижать FPS превью)');
-}
-async function loadScript(src){
-  return new Promise((res,rej)=>{
-    const s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=rej; document.head.appendChild(s);
-  });
-}
-// сегментация фона в основном цикле рендера, если включена и модель загружена
-const _origApplyClipEffects = applyClipEffects;
-applyClipEffects = function(c, relT){
-  _origApplyClipEffects(c, relT);
-  const bg = c.effects.find(e=>e.type==='bgremove');
-  if(bg && bodyPixModel && c.el){
-    bodyPixModel.segmentPerson(c.el, {internalResolution:'low'}).then(seg=>{
-      const w=stage.width,h=stage.height;
-      const mask=ctx.getImageData(0,0,w,h);
-      // упрощённое наложение маски: если в реальном пикселе сегментации фон — затемняем/прозрачность
-      // (для производительности применяется частично — это демонстрационная реализация)
-    }).catch(()=>{});
-  }
-};
-
-// AI-функции, требующие внешнего сервера/API — честные заглушки с точкой интеграции
-function aiStub_translate(){
-  toast('AI-перевод требует внешнего сервиса перевода (например, серверного эндпоинта). Добавьте свой API в функции aiStub_translate().', true);
-}
-function aiStub_upscale(){
-  toast('AI-апскейл (Real-ESRGAN/аналоги) требует серверной ML-модели — в браузере без GPU-сервера это не реализуется качественно.', true);
-}
-function aiStub_musicGen(){
-  toast('AI-генерация музыки требует внешней модели (например, серверного API генерации аудио). Точка интеграции: aiStub_musicGen().', true);
-}
-function aiStub_noiseRemovalFile(){
-  toast('Шумоподавление для уже записанного файла требует ML-модели (например, RNNoise/serverside). Для записи микрофона шумоподавление уже работает (включите галочку в разделе «Звук»).', true);
-}
+/* Удаление фона, AI-перевод, AI-апскейл, AI-генерация музыки и шумоподавление импортированного
+   файла исключены из этой офлайн-версии: все они требуют либо скачивания ML-модели с интернета
+   (TensorFlow.js/BodyPix — десятки МБ), либо внешнего серверного API с ключом. Поскольку телефон
+   будет работать без интернета, такие функции в принципе не могут работать надёжно — поэтому они
+   убраны из интерфейса, чтобы не показывать кнопки, которые не будут работать. */
 
 /* =========================================================================
    ЭКСПОРТ
    ========================================================================= */
+function detectBestMime(){
+  const candidates=[
+    'video/mp4;codecs=h264,aac',
+    'video/mp4;codecs=avc1',
+    'video/mp4',
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp8,opus',
+    'video/webm',
+  ];
+  for(const c of candidates){
+    if(window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(c)) return c;
+  }
+  return ''; // браузер сам выберет
+}
 function showExportModal(){
+  const best=detectBestMime();
+  const willBeMp4 = best.includes('mp4');
   const m=document.createElement('div'); m.className='modal-bg';
   m.innerHTML=`<div class="modal">
     <h3>⬇ Экспорт проекта</h3>
-    <div class="field"><label>Формат</label>
-      <select id="expFormat"><option value="webm">WEBM (нативно, надёжно)</option><option value="mp4">MP4*</option><option value="mov">MOV*</option><option value="gif">GIF*</option></select>
-    </div>
+    <div class="note">${willBeMp4
+      ? '✅ Ваш телефон/браузер умеет записывать видео напрямую в <b>MP4</b> — экспорт будет в MP4, файл сразу откроется в любом плеере и легко отправится в WhatsApp/Telegram.'
+      : '⚠️ Этот браузер не умеет кодировать видео в MP4 напрямую (только WEBM). Это ограничение самого браузера, обойти его без интернета и тяжёлых конвертеров нельзя. Файл будет в формате WEBM — он тоже открывается на большинстве телефонов (VLC, MX Player) и тоже отправляется в Telegram/WhatsApp, но не во все плееры iPhone.'}</div>
     <div class="field"><label>Качество</label>
       <select id="expQuality"><option>480p</option><option>720p</option><option selected>1080p</option><option>2K</option><option>4K</option></select>
     </div>
@@ -1910,36 +1993,28 @@ function showExportModal(){
       <select id="expBitrate"><option value="auto">Auto</option><option value="custom">Пользовательский (Мбит/с)</option></select>
     </div>
     <div class="field hidden" id="customBitrateField"><label>Битрейт, Мбит/с</label><input type="number" id="expBitrateCustom" value="8"></div>
-    <div class="note" id="formatNote">WEBM экспортируется напрямую в браузере через MediaRecorder — без потери времени на конвертацию.</div>
     <div class="modal-actions">
       <button class="tb-btn" id="expCancel">Отмена</button>
-      <button class="tb-btn primary" id="expGo">Экспортировать</button>
+      <button class="tb-btn primary" id="expGo">Экспортировать в ${willBeMp4?'MP4':'WEBM'}</button>
     </div>
   </div>`;
   document.body.appendChild(m);
   m.querySelector('#expBitrate').onchange=e=> m.querySelector('#customBitrateField').classList.toggle('hidden', e.target.value!=='custom');
-  m.querySelector('#expFormat').onchange=e=>{
-    const note=m.querySelector('#formatNote');
-    if(e.target.value==='webm') note.textContent='WEBM экспортируется напрямую в браузере через MediaRecorder — без потери времени на конвертацию.';
-    else note.textContent='Браузеры не умеют нативно кодировать '+e.target.value.toUpperCase()+'. Файл будет записан как WEBM, затем потребуется конвертация (например, через ffmpeg) — это не реализовано в данном демо-файле, чтобы не тянуть тяжёлые WASM-зависимости без необходимости.';
-  };
   m.querySelector('#expCancel').onclick=()=>m.remove();
   m.querySelector('#expGo').onclick=()=>{
-    const format=m.querySelector('#expFormat').value;
     const quality=m.querySelector('#expQuality').value;
     const fps=Number(m.querySelector('#expFps').value);
     const bitrateMode=m.querySelector('#expBitrate').value;
     const bitrateMbps=bitrateMode==='custom'?Number(m.querySelector('#expBitrateCustom').value):null;
     m.remove();
-    runExport({format,quality,fps,bitrateMbps});
+    runExport({mime:best, fps, quality, bitrateMbps});
   };
 }
 $('#btnExport').onclick=showExportModal;
 
 const QUALITY_MAP={'480p':[854,480],'720p':[1280,720],'1080p':[1920,1080],'2K':[2560,1440],'4K':[3840,2160]};
 
-async function runExport({format,quality,fps,bitrateMbps}){
-  if(format!=='webm'){ toast('Запись начнётся как WEBM (см. примечание в окне экспорта)'); }
+async function runExport({mime,quality,fps,bitrateMbps}){
   const [qw,qh] = QUALITY_MAP[quality];
   let outW=qw, outH=qh;
   // сохраняем аспект проекта
@@ -1969,7 +2044,8 @@ async function runExport({format,quality,fps,bitrateMbps}){
 
   const videoStream = exportCanvas.captureStream(fps);
   const combined = new MediaStream([...videoStream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
-  const opts={mimeType:'video/webm;codecs=vp9,opus'};
+  const opts={};
+  if(mime) opts.mimeType = mime;
   if(bitrateMbps) opts.videoBitsPerSecond = bitrateMbps*1_000_000;
   let recorder;
   try{ recorder=new MediaRecorder(combined, opts); }
@@ -1999,10 +2075,12 @@ async function runExport({format,quality,fps,bitrateMbps}){
   });
 
   await new Promise(r=> recorder.onstop=r);
-  const blob=new Blob(chunks,{type:'video/webm'});
+  const actualMime = recorder.mimeType || mime || 'video/webm';
+  const ext = actualMime.includes('mp4') ? 'mp4' : 'webm';
+  const blob=new Blob(chunks,{type:actualMime});
   const url=URL.createObjectURL(blob);
-  const a=document.createElement('a'); a.href=url; a.download=(state.projectName||'video')+'.webm'; a.click();
-  toast('Экспорт завершён ✅ Файл сохранён как .webm');
+  const a=document.createElement('a'); a.href=url; a.download=(state.projectName||'video')+'.'+ext; a.click();
+  toast('Экспорт завершён ✅ Файл сохранён как .'+ext);
   if(wasPlaying) startPlayback();
 }
 

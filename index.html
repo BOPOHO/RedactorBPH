@@ -132,16 +132,6 @@
             overflow: hidden;
         }
 
-        #bgBlur {
-            position: absolute;
-            inset: 0;
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            filter: blur(28px) brightness(.55);
-            transform: scale(1.15);
-        }
-
         #stage {
             position: relative;
             max-width: 100%;
@@ -899,7 +889,6 @@
 
         <div class="center">
             <div class="preview-wrap" id="previewWrap">
-                <img id="bgBlur" class="hidden">
                 <canvas id="stage" width="1280" height="720"></canvas>
                 <div id="xformBox" class="xform-box hidden">
                     <div class="xform-handle nw" data-handle="nw"></div>
@@ -914,6 +903,7 @@
                 <button class="transport-btn" id="btnToStart">⏮</button>
                 <button class="transport-btn play" id="btnPlay">▶</button>
                 <span class="tcode" id="tcode">00:00 / 00:00</span>
+                <button class="ratio-btn" id="btnBg">🎨 Фон</button>
                 <button class="ratio-btn" id="btnRatio">16:9</button>
             </div>
         </div>
@@ -987,7 +977,7 @@
             { type: 'overlay', name: 'Текст', icon: '🔤' },
         ];
         const state = {
-            canvasW: 1280, canvasH: 720, ratio: '16:9', bgColor: '#000000',
+            canvasW: 1280, canvasH: 720, ratio: '16:9', bgColor: '#000000', bgMode: 'blur',
             tracks: TRACK_DEFS.map(d => ({ id: uid(), type: d.type, name: d.name, clips: [] })),
             duration: 10, currentTime: 0, playing: false, pxPerSec: 55,
             selectedClipId: null, mediaLibrary: [], history: [], future: [],
@@ -1037,7 +1027,7 @@
         async function idbSaveProject() {
             const db = await idbReady;
             const meta = {
-                canvasW: state.canvasW, canvasH: state.canvasH, ratio: state.ratio, bgColor: state.bgColor, tracks: state.tracks, duration: state.duration,
+                canvasW: state.canvasW, canvasH: state.canvasH, ratio: state.ratio, bgColor: state.bgColor, bgMode: state.bgMode, tracks: state.tracks, duration: state.duration,
                 mediaMeta: state.mediaLibrary.map(m => ({ id: m.id, name: m.name, kind: m.kind, duration: m.duration, thumb: m.thumb }))
             };
             await new Promise((res, rej) => { const tx = db.transaction('project', 'readwrite'); tx.objectStore('project').put(JSON.stringify(meta, (k, v) => k === 'el' ? undefined : v), 'current'); tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
@@ -1062,7 +1052,7 @@
             }
             state.mediaLibrary = Object.values(byId);
             state.tracks = meta.tracks; state.duration = meta.duration || 10;
-            state.canvasW = meta.canvasW || state.canvasW; state.canvasH = meta.canvasH || state.canvasH; state.ratio = meta.ratio || state.ratio; state.bgColor = meta.bgColor || state.bgColor;
+            state.canvasW = meta.canvasW || state.canvasW; state.canvasH = meta.canvasH || state.canvasH; state.ratio = meta.ratio || state.ratio; state.bgColor = meta.bgColor || state.bgColor; state.bgMode = meta.bgMode || state.bgMode;
             state.tracks.forEach(tr => tr.clips.forEach(c => { const lib = state.mediaLibrary.find(m => m.id === c.mediaId); if (lib) c.el = lib.el; }));
             renderAll();
             return true;
@@ -1341,7 +1331,16 @@
             el.volume = clamp(vol, 0, 1); el.muted = false;
             // допуск рассинхрона увеличен, чтобы не дёргать currentTime каждый кадр и не вызывать заикания/фриз звука
             const needSeek = !shouldPlay || c.reverse || Math.abs(el.currentTime - target) > 0.35;
-            if (needSeek) { try { el.currentTime = clamp(target, 0, (el.duration || target) + 0.05); } catch (e) { } }
+            if (needSeek) {
+                const clampedTarget = clamp(target, 0, (el.duration || target) + 0.05);
+                // fastSeek (где поддерживается браузером) переходит к ближайшему опорному кадру
+                // быстрее, чем точный currentTime — заметно сокращает подтормаживание именно
+                // в момент перехода между кусками после разреза.
+                try {
+                    if (typeof el.fastSeek === 'function') el.fastSeek(clampedTarget);
+                    else el.currentTime = clampedTarget;
+                } catch (e) { try { el.currentTime = clampedTarget; } catch (e2) { } }
+            }
             if (shouldPlay && !c.reverse) { el.playbackRate = clamp(c.speed || 1, 0.0625, 16); if (el.paused) el.play().catch(() => { }); }
             else if (!el.paused) { try { el.pause(); } catch (e) { } }
         }
@@ -1361,23 +1360,30 @@
             if (c.kind === 'photo') { const el = c.el; return { w: (el && el.naturalWidth) || state.canvasW, h: (el && el.naturalHeight) || state.canvasH }; }
             return null;
         }
-        function drawBackgroundBlur(entry) {
-            if (isExporting || !entry) return;
-            const { clip: c } = entry; const nat = getNativeSize(c); if (!nat) return;
+        function fitContainSize(c) {
+            const nat = getNativeSize(c); if (!nat || !nat.w || !nat.h) return null;
             const crop = c.crop || { l: 0, t: 0, r: 0, b: 0 };
             const sw = nat.w * (1 - crop.l - crop.r), sh = nat.h * (1 - crop.t - crop.b);
             const scale = Math.min(state.canvasW / sw, state.canvasH / sh);
-            const dw = sw * scale, dh = sh * scale;
-            const bgImg = $('#bgBlur');
-            if (dw < state.canvasW - 2 || dh < state.canvasH - 2) {
-                if (c.el && (c.kind === 'video' || c.kind === 'photo')) {
-                    try {
-                        if (c.kind === 'video') { if (!bgImg._cv) { bgImg._cv = document.createElement('canvas'); } const cv = bgImg._cv; cv.width = 160; cv.height = 90; cv.getContext('2d').drawImage(c.el, 0, 0, 160, 90); bgImg.src = cv.toDataURL(); }
-                        else bgImg.src = c.el.src;
-                        bgImg.classList.remove('hidden');
-                    } catch (e) { bgImg.classList.add('hidden'); }
-                }
-            } else bgImg.classList.add('hidden');
+            return { dw: sw * scale, dh: sh * scale };
+        }
+        // Размытый фон-подложка рисуется ПРЯМО НА CANVAS (а не отдельной DOM-картинкой поверх,
+        // как было раньше) — благодаря этому он одинаково виден и в превью, и в записанном видео,
+        // потому что экспорт записывает буквально то, что нарисовано на canvas.
+        function drawCoverBlurBackground(c) {
+            if (!c.el || (c.kind !== 'video' && c.kind !== 'photo')) return false;
+            const nat = getNativeSize(c); if (!nat || !nat.w || !nat.h) return false;
+            const cw = state.canvasW, ch = state.canvasH;
+            const scale = Math.max(cw / nat.w, ch / nat.h) * 1.15; // запас 15%, чтобы блюр не показывал чёткий край картинки
+            const dw = nat.w * scale, dh = nat.h * scale;
+            const dx = (cw - dw) / 2, dy = (ch - dh) / 2;
+            try {
+                ctx.save();
+                ctx.filter = `blur(${Math.max(6, Math.round(cw * 0.025))}px) brightness(0.55)`;
+                ctx.drawImage(c.el, dx, dy, dw, dh);
+                ctx.restore();
+                return true;
+            } catch (e) { return false; }
         }
         function drawClip(entry, globalTime) {
             const { clip: c } = entry;
@@ -1485,10 +1491,19 @@
 
         function renderFrame(time) {
             ctx.clearRect(0, 0, stage.width, stage.height); ctx.filter = 'none'; ctx.globalAlpha = 1;
-            ctx.fillStyle = state.bgColor; ctx.fillRect(0, 0, stage.width, stage.height);
             const allActive = activeClipsAt(time);
             const mediaEntries = allActive.filter(e => e.track.type === 'media').sort((a, b) => a.clip.start - b.clip.start);
-            drawBackgroundBlur(mediaEntries[mediaEntries.length - 1]);
+            const topMedia = mediaEntries[mediaEntries.length - 1];
+            let bgDrawn = false;
+            if (topMedia && state.bgMode === 'blur') {
+                const fit = fitContainSize(topMedia.clip);
+                // рисуем размытую подложку, только если контент НЕ заполняет весь кадр целиком
+                // (иначе блюр всё равно был бы не виден, не тратим на него ресурсы)
+                if (fit && (fit.dw < state.canvasW - 2 || fit.dh < state.canvasH - 2)) {
+                    bgDrawn = drawCoverBlurBackground(topMedia.clip);
+                }
+            }
+            if (!bgDrawn) { ctx.filter = 'none'; ctx.fillStyle = state.bgColor; ctx.fillRect(0, 0, stage.width, stage.height); }
             const order = { media: 1, overlay: 4, audio: 0 };
             const visEntries = allActive.filter(e => e.track.type !== 'audio' ? (e.track.type === 'media' ? true : e.clip.kind !== '') : false);
             allActive.forEach(entry => {
@@ -1984,7 +1999,20 @@
         $('#btnTheme').onclick = () => applyTheme(document.body.classList.contains('theme-light') ? 'dark' : 'light');
         (function initTheme() { let saved = 'dark'; try { saved = localStorage.getItem('vf_theme') || 'dark'; } catch (e) { } applyTheme(saved); })();
 
-        const RATIOS = ['16:9', '9:16', '1:1'];
+        $('#btnBg').onclick = () => openSheet('Фон', (body) => {
+            body.innerHTML = `<div class="note">Так заполняются пустые поля по краям, если видео/фото не на весь кадр (например, вертикальное видео в горизонтальном проекте).</div>`;
+            const row = document.createElement('div'); row.className = 'btn-row'; row.style.marginTop = '12px';
+            row.appendChild(mkChip('🌫 Размытие', state.bgMode === 'blur', () => { state.bgMode = 'blur'; pushHistory(); renderFrame(state.currentTime); $('#btnBg').onclick(); }));
+            row.appendChild(mkChip('🎨 Цвет', state.bgMode === 'color', () => { state.bgMode = 'color'; pushHistory(); renderFrame(state.currentTime); $('#btnBg').onclick(); }));
+            body.appendChild(row);
+            if (state.bgMode === 'color') {
+                const colorField = document.createElement('div'); colorField.style.marginTop = '16px';
+                colorField.innerHTML = `<label style="font-size:12.5px;color:var(--txt-dim);display:block;margin-bottom:8px">Цвет фона</label><input type="color" id="bgColorInput" value="${state.bgColor}" style="width:100%;height:46px;border:none;border-radius:10px">`;
+                body.appendChild(colorField);
+                colorField.querySelector('#bgColorInput').oninput = e => { state.bgColor = e.target.value; renderFrame(state.currentTime); };
+                colorField.querySelector('#bgColorInput').onchange = () => pushHistory();
+            }
+        });
         $('#btnRatio').onclick = () => {
             let idx = RATIOS.indexOf(state.ratio); idx = (idx + 1) % RATIOS.length; const r = RATIOS[idx];
             const [w, h] = r.split(':').map(Number); const base = 720;
@@ -2047,7 +2075,6 @@
             isExporting = true;
             const overlay = $('#exportOverlay'); overlay.classList.remove('hidden');
             const fill = $('#exportBarFill'); const pct = $('#exportPct'); fill.style.width = '0%'; pct.textContent = '0%';
-            $('#bgBlur').classList.add('hidden');
 
             await audioCtxMain.resume().catch(() => { });
 

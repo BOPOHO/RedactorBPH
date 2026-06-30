@@ -208,6 +208,28 @@
             background: var(--accent2);
         }
 
+        .xform-gear {
+            position: absolute;
+            top: -42px;
+            right: -4px;
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: var(--accent);
+            border: 2px solid #fff;
+            color: #fff;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            touch-action: none;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, .4);
+        }
+
+        .xform-gear:active {
+            transform: scale(.92);
+        }
+
         .transport {
             display: flex;
             align-items: center;
@@ -391,6 +413,29 @@
             bottom: 2px;
             font-size: 10px;
             opacity: .85;
+        }
+
+        .clip .clip-gear {
+            position: absolute;
+            top: 1px;
+            right: 1px;
+            width: 22px;
+            height: 22px;
+            border-radius: 6px;
+            background: rgba(0, 0, 0, .45);
+            border: 1px solid rgba(255, 255, 255, .25);
+            color: #fff;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 4;
+            padding: 0;
+            line-height: 1;
+        }
+
+        .clip .clip-gear:active {
+            background: rgba(0, 0, 0, .7);
         }
 
         .clip .handle {
@@ -862,6 +907,7 @@
                     <div class="xform-handle sw" data-handle="sw"></div>
                     <div class="xform-handle se" data-handle="se"></div>
                     <div class="xform-rotate" data-handle="rotate"></div>
+                    <button type="button" id="xformGear" class="xform-gear" title="Настройки">⚙</button>
                 </div>
             </div>
             <div class="transport">
@@ -1080,8 +1126,17 @@
         }
         function recalcDuration() { let max = 4; state.tracks.forEach(tr => tr.clips.forEach(c => max = Math.max(max, c.start + c.dur))); state.duration = max + 1.5; }
         function findClip(id) { for (const tr of state.tracks) for (const c of tr.clips) if (c.id === id) return { clip: c, track: tr }; return null; }
-        function selectClip(id) { state.selectedClipId = id; renderTimeline(); if (id) openClipProps(id); }
-        function deleteClip(id) { const f = findClip(id); if (!f) return; f.track.clips = f.track.clips.filter(c => c.id !== id); if (state.selectedClipId === id) state.selectedClipId = null; recalcDuration(); pushHistory(); renderTimeline(); closeSheet(); }
+        function selectClip(id) { state.selectedClipId = id; renderTimeline(); updateXformOverlay(); }
+        function deleteClip(id) {
+            const f = findClip(id); if (!f) return;
+            const { clip: removed, track } = f;
+            track.clips = track.clips.filter(c => c.id !== id);
+            // Ripple-delete: подтягиваем все клипы ПОСЛЕ удалённого на этой же дорожке,
+            // чтобы не образовывалась пустая "дыра" (которая выглядит как ещё один баг).
+            track.clips.forEach(c => { if (c.start >= removed.start + removed.dur - 0.01) c.start -= removed.dur; });
+            if (state.selectedClipId === id) state.selectedClipId = null;
+            recalcDuration(); pushHistory(); renderTimeline(); closeSheet();
+        }
         function duplicateClip(id) {
             const f = findClip(id); if (!f) return;
             const copy = JSON.parse(JSON.stringify(f.clip, (k, v) => k === 'el' ? undefined : v));
@@ -1183,10 +1238,14 @@
             if (c.transitionIn || c.transitionOut) icons += '↔';
             if (c.effects && c.effects.length) icons += '✨';
             if (c.kenBurns) icons += '🎥';
-            div.innerHTML = `<span class="clip-label">${label}</span><span class="clip-icons">${icons}</span><div class="handle l"></div><div class="handle r"></div>`;
+            div.innerHTML = `<span class="clip-label">${label}</span><span class="clip-icons">${icons}</span><button type="button" class="clip-gear" title="Настройки">⚙</button><div class="handle l"></div><div class="handle r"></div>`;
+
+            const gearBtn = div.querySelector('.clip-gear');
+            gearBtn.onpointerdown = e => { e.stopPropagation(); };
+            gearBtn.onclick = e => { e.stopPropagation(); selectClip(c.id); openClipProps(c.id); };
 
             div.onpointerdown = e => {
-                if (e.target.classList.contains('handle')) return;
+                if (e.target.classList.contains('handle') || e.target.classList.contains('clip-gear')) return;
                 e.stopPropagation(); selectClip(c.id);
                 try { div.setPointerCapture(e.pointerId); } catch (err) { }
                 const startX = e.clientX, startLeft = c.start;
@@ -1409,12 +1468,19 @@
                 }
             });
         }
-        function doScreenShake(inten) { try { const w = stage.width, h = stage.height; const snap = document.createElement('canvas'); snap.width = w; snap.height = h; snap.getContext('2d').drawImage(stage, 0, 0); const dx = (Math.random() - 0.5) * 24 * inten, dy = (Math.random() - 0.5) * 24 * inten; ctx.save(); ctx.filter = 'none'; ctx.clearRect(0, 0, w, h); ctx.fillStyle = state.bgColor; ctx.fillRect(0, 0, w, h); ctx.drawImage(snap, dx, dy); ctx.restore(); } catch (e) { } }
-        function doScreenBlur(inten) { try { const w = stage.width, h = stage.height; const snap = document.createElement('canvas'); snap.width = w; snap.height = h; snap.getContext('2d').drawImage(stage, 0, 0); ctx.save(); ctx.filter = `blur(${(inten * 10).toFixed(1)}px)`; ctx.clearRect(0, 0, w, h); ctx.drawImage(snap, 0, 0); ctx.restore(); } catch (e) { } }
+        let fxScratchCanvas = null, fxScratchCtx = null;
+        function getFxScratch(w, h) {
+            if (!fxScratchCanvas) { fxScratchCanvas = document.createElement('canvas'); fxScratchCtx = fxScratchCanvas.getContext('2d'); }
+            if (fxScratchCanvas.width !== w || fxScratchCanvas.height !== h) { fxScratchCanvas.width = w; fxScratchCanvas.height = h; }
+            return fxScratchCanvas;
+        }
+        function doScreenShake(inten) { try { const w = stage.width, h = stage.height; const snap = getFxScratch(w, h); fxScratchCtx.clearRect(0, 0, w, h); fxScratchCtx.drawImage(stage, 0, 0); const dx = (Math.random() - 0.5) * 24 * inten, dy = (Math.random() - 0.5) * 24 * inten; ctx.save(); ctx.filter = 'none'; ctx.clearRect(0, 0, w, h); ctx.fillStyle = state.bgColor; ctx.fillRect(0, 0, w, h); ctx.drawImage(snap, dx, dy); ctx.restore(); } catch (e) { } }
+        function doScreenBlur(inten) { try { const w = stage.width, h = stage.height; const snap = getFxScratch(w, h); fxScratchCtx.clearRect(0, 0, w, h); fxScratchCtx.drawImage(stage, 0, 0); ctx.save(); ctx.filter = `blur(${(inten * 10).toFixed(1)}px)`; ctx.clearRect(0, 0, w, h); ctx.drawImage(snap, 0, 0); ctx.restore(); } catch (e) { } }
         function doGlitchSlice(inten) { const w = stage.width, h = stage.height; const sliceH = 6 + Math.random() * 26; const y = Math.random() * (h - sliceH); const dx = (Math.random() - 0.5) * 36 * inten; try { const id = ctx.getImageData(0, y, w, sliceH); ctx.putImageData(id, dx, y); } catch (e) { } }
         function doChromaSplit(inten) { const w = stage.width, h = stage.height; ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = 0.5; try { const snap = ctx.getImageData(0, 0, w, h); ctx.putImageData(snap, 2 * inten, 0); } catch (e) { } ctx.restore(); }
         function doNoiseOverlay(inten) { ensureGrain(); ctx.save(); ctx.filter = 'none'; ctx.globalAlpha = 0.16 * inten; ctx.globalCompositeOperation = 'overlay'; ctx.drawImage(grainCanvas, 0, 0, stage.width, stage.height); ctx.restore(); }
-        function doPixelate(inten) { const w = stage.width, h = stage.height; const f = Math.max(2, Math.round(1 + inten * 26)); try { const small = document.createElement('canvas'); small.width = Math.max(1, w / f); small.height = Math.max(1, h / f); small.getContext('2d').drawImage(stage, 0, 0, small.width, small.height); ctx.save(); ctx.imageSmoothingEnabled = false; ctx.drawImage(small, 0, 0, small.width, small.height, 0, 0, w, h); ctx.restore(); } catch (e) { } }
+        let fxPixelCanvas = null, fxPixelCtx = null;
+        function doPixelate(inten) { const w = stage.width, h = stage.height; const f = Math.max(2, Math.round(1 + inten * 26)); const sw = Math.max(1, Math.round(w / f)), sh = Math.max(1, Math.round(h / f)); try { if (!fxPixelCanvas) { fxPixelCanvas = document.createElement('canvas'); fxPixelCtx = fxPixelCanvas.getContext('2d'); } if (fxPixelCanvas.width !== sw || fxPixelCanvas.height !== sh) { fxPixelCanvas.width = sw; fxPixelCanvas.height = sh; } fxPixelCtx.clearRect(0, 0, sw, sh); fxPixelCtx.drawImage(stage, 0, 0, sw, sh); ctx.save(); ctx.imageSmoothingEnabled = false; ctx.drawImage(fxPixelCanvas, 0, 0, sw, sh, 0, 0, w, h); ctx.restore(); } catch (e) { } }
         function doFlash(inten) { ctx.save(); ctx.filter = 'none'; ctx.globalAlpha = 0.5 * inten; ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, stage.width, stage.height); ctx.restore(); }
 
         function renderFrame(time) {
@@ -1433,9 +1499,15 @@
                     if (entry.track.type === 'media') applyClipEffects(entry, time);
                 } catch (err) { /* fail-safe: skip broken clip */ }
             });
+            // ВАЖНО: после разрезания клипа (✂️) оба куска используют ОДИН И ТОТ ЖЕ <video>/<audio>
+            // элемент (c.el). Раньше код проверял "активность" по каждому КЛИПУ отдельно и мог
+            // поставить элемент на паузу, даже если в этот же момент он нужен соседнему клипу,
+            // который как раз играет тот же файл — получалось, что время на таймлайне идёт,
+            // а видео замирает (play() и pause() дёргались каждый кадр). Теперь пауза ставится
+            // только если ни один активный сейчас клип не использует этот элемент.
+            const activeEls = new Set(allActive.map(en => en.clip.el).filter(Boolean));
             state.tracks.forEach(tr => tr.clips.forEach(c => {
-                const isActive = time >= c.start && time < c.start + c.dur;
-                if (!isActive && c.el && !c.el.paused) try { c.el.pause(); } catch (e) { }
+                if (c.el && !activeEls.has(c.el) && !c.el.paused) { try { c.el.pause(); } catch (e) { } }
             }));
         }
         function tick(ts) {
@@ -1498,7 +1570,7 @@
         function clientToCanvas(clientX, clientY) { const rect = stage.getBoundingClientRect(); return { x: (clientX - rect.left) * (stage.width / rect.width), y: (clientY - rect.top) * (stage.height / rect.height) }; }
         (function enableXform() {
             xformBox.addEventListener('pointerdown', e => {
-                if (e.target.closest('.xform-handle') || e.target.closest('.xform-rotate')) return;
+                if (e.target.closest('.xform-handle') || e.target.closest('.xform-rotate') || e.target.closest('.xform-gear')) return;
                 const c = currentXformClip(); if (!c) return;
                 e.preventDefault(); e.stopPropagation();
                 try { xformBox.setPointerCapture(e.pointerId); } catch (err) { }
@@ -1530,6 +1602,7 @@
                 window.addEventListener('pointermove', onMove, { passive: false }); window.addEventListener('pointerup', onUp); window.addEventListener('pointercancel', onUp);
             });
             window.addEventListener('resize', updateXformOverlay);
+            $('#xformGear').onclick = e => { e.stopPropagation(); if (state.selectedClipId) openClipProps(state.selectedClipId); };
         })();
 
         /* =================== BOTTOM SHEET SYSTEM =================== */
@@ -1945,16 +2018,32 @@
             const found = detectExportMime();
             if (!found) { toast('Этот браузер не поддерживает запись видео. Обновите Chrome.', true); return; }
             if (!state.tracks.some(t => t.clips.length)) { toast('Сначала добавьте хотя бы один клип', true); return; }
-            try {
-                await runExport(found);
-            } catch (err) {
-                console.error('Export failed:', err);
-                toast('Ошибка экспорта: ' + (err && err.message ? err.message : 'неизвестная ошибка'), true);
-                $('#exportOverlay').classList.add('hidden');
-                isExporting = false;
-            }
+            openSheet('Качество видео', (body) => {
+                body.innerHTML = `<div class="note">Чем ниже качество — тем быстрее и плавнее рендер, особенно на слабых телефонах.</div>`;
+                const opts = [
+                    [480, '480p', 'Быстрее всего, для слабых телефонов'],
+                    [720, '720p', 'Рекомендуется — баланс качества и скорости'],
+                    [1080, '1080p', 'Лучшее качество, рендерится дольше'],
+                ];
+                opts.forEach(([h, label, sub]) => {
+                    const b = document.createElement('button');
+                    b.className = 'chip'; b.style.cssText = 'width:100%;justify-content:flex-start;flex-direction:column;align-items:flex-start;height:auto;padding:12px 14px;margin-top:10px;gap:2px';
+                    b.innerHTML = `<div style="font-weight:600;font-size:14px">${label}</div><div style="font-size:11.5px;color:var(--txt-faint)">${sub}</div>`;
+                    b.onclick = async () => {
+                        closeSheet();
+                        try { await runExport(found, h); }
+                        catch (err) {
+                            console.error('Export failed:', err);
+                            toast('Ошибка экспорта: ' + (err && err.message ? err.message : 'неизвестная ошибка'), true);
+                            $('#exportOverlay').classList.add('hidden');
+                            isExporting = false;
+                        }
+                    };
+                    body.appendChild(b);
+                });
+            });
         };
-        async function runExport({ mime, ext }) {
+        async function runExport({ mime, ext }, targetHeight) {
             isExporting = true;
             const overlay = $('#exportOverlay'); overlay.classList.remove('hidden');
             const fill = $('#exportBarFill'); const pct = $('#exportPct'); fill.style.width = '0%'; pct.textContent = '0%';
@@ -1962,10 +2051,10 @@
 
             await audioCtxMain.resume().catch(() => { });
 
-            // 720p for speed; matches project aspect ratio
+            // Разрешение по выбору пользователя (480/720/1080p), сохраняя пропорции проекта.
             const projRatio = state.canvasW / state.canvasH;
-            let outW = 1280, outH = Math.round(outW / projRatio);
-            if (outH > 1280) { outH = 1280; outW = Math.round(outH * projRatio); }
+            let outH = targetHeight || 720, outW = Math.round(outH * projRatio);
+            if (projRatio < 1) { outW = targetHeight || 720; outH = Math.round(outW / projRatio); } // вертикальное видео: ограничиваем по ширине
             const exportCanvas = document.createElement('canvas'); exportCanvas.width = outW; exportCanvas.height = outH;
             const ectx = exportCanvas.getContext('2d');
 

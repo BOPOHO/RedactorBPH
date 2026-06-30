@@ -119,7 +119,7 @@
             display: flex;
             flex-direction: column;
             min-height: 0;
-            background: #111;  /* FIX #4: не чёрный в чёрном — темно-серый фон вокруг канваса */
+            background: #000;
             position: relative;
         }
 
@@ -142,14 +142,12 @@
             transform: scale(1.15);
         }
 
-        /* FIX #4: видимая рамка вокруг канваса чтобы было видно границы */
         #stage {
             position: relative;
             max-width: 100%;
             max-height: 100%;
-            box-shadow: 0 0 0 2px rgba(255,255,255,0.18), 0 10px 40px rgba(0, 0, 0, .6);
+            box-shadow: 0 10px 40px rgba(0, 0, 0, .6);
             border-radius: 2px;
-            display: block;
         }
 
         .xform-box {
@@ -250,6 +248,7 @@
         }
 
         .ratio-btn {
+            margin-left: auto;
             background: var(--bg3);
             border: 1px solid var(--line2);
             color: var(--txt-dim);
@@ -257,27 +256,6 @@
             padding: 0 12px;
             border-radius: 18px;
             font-size: 12.5px;
-        }
-
-        /* FIX #3: кнопка фона в топбаре */
-        .bg-btn {
-            background: var(--bg3);
-            border: 1px solid var(--line2);
-            color: var(--txt-dim);
-            height: 36px;
-            padding: 0 10px;
-            border-radius: 18px;
-            font-size: 12.5px;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-        .bg-swatch {
-            width: 16px;
-            height: 16px;
-            border-radius: 50%;
-            border: 1.5px solid rgba(255,255,255,0.3);
-            flex-shrink: 0;
         }
 
         /* ---------- TIMELINE ---------- */
@@ -393,12 +371,6 @@
         .clip.selected {
             border-color: #fff;
             box-shadow: 0 0 0 2px var(--accent);
-        }
-
-        /* FIX #1: visual hint when dragging vs tap */
-        .clip.dragging {
-            opacity: 0.85;
-            cursor: grabbing;
         }
 
         .clip .clip-label {
@@ -863,33 +835,6 @@
             --txt-dim: #585d6b;
             --txt-faint: #8c91a0;
         }
-
-        body.theme-light .center {
-            background: #c8cad0;
-        }
-
-        /* FIX #3: Color picker sheet */
-        .bg-color-grid {
-            display: grid;
-            grid-template-columns: repeat(5, 1fr);
-            gap: 10px;
-            margin-bottom: 14px;
-        }
-        .bg-color-swatch {
-            aspect-ratio: 1/1;
-            border-radius: 10px;
-            border: 2px solid transparent;
-            cursor: pointer;
-            transition: transform 0.12s;
-        }
-        .bg-color-swatch:active { transform: scale(0.9); }
-        .bg-color-swatch.active {
-            border-color: #fff;
-            box-shadow: 0 0 0 2px var(--accent);
-        }
-        .bg-transparent-swatch {
-            background: repeating-conic-gradient(#555 0% 25%, #888 0% 50%) 0 0 / 12px 12px;
-        }
     </style>
 </head>
 
@@ -923,11 +868,6 @@
                 <button class="transport-btn" id="btnToStart">⏮</button>
                 <button class="transport-btn play" id="btnPlay">▶</button>
                 <span class="tcode" id="tcode">00:00 / 00:00</span>
-                <!-- FIX #3: Фон кнопка в транспорте -->
-                <button class="bg-btn" id="btnBg">
-                    <div class="bg-swatch" id="bgSwatch"></div>
-                    Фон
-                </button>
                 <button class="ratio-btn" id="btnRatio">16:9</button>
             </div>
         </div>
@@ -978,7 +918,7 @@
         let lastToast = '', lastToastTime = 0;
         function toast(msg, isErr = false) {
             const now = Date.now();
-            if (msg === lastToast && now - lastToastTime < 1500) return;
+            if (msg === lastToast && now - lastToastTime < 1500) return; // dedupe / anti-spam
             lastToast = msg; lastToastTime = now;
             const stack = $('#toastStack');
             if (stack.children.length >= 2) stack.firstChild.remove();
@@ -1001,7 +941,7 @@
             { type: 'overlay', name: 'Текст', icon: '🔤' },
         ];
         const state = {
-            canvasW: 1280, canvasH: 720, ratio: '16:9', bgColor: '#000000', bgTransparent: false,
+            canvasW: 1280, canvasH: 720, ratio: '16:9', bgColor: '#000000',
             tracks: TRACK_DEFS.map(d => ({ id: uid(), type: d.type, name: d.name, clips: [] })),
             duration: 10, currentTime: 0, playing: false, pxPerSec: 55,
             selectedClipId: null, mediaLibrary: [], history: [], future: [],
@@ -1023,7 +963,6 @@
         function renderAll() {
             stage.width = state.canvasW; stage.height = state.canvasH;
             renderTracks(); renderTimeline(); renderFrame(state.currentTime);
-            updateBgSwatch();
         }
         function undo() { if (!state.history.length) return; state.future.push(snapshot()); restoreSnapshot(state.history.pop()); }
         function redo() { if (!state.future.length) return; state.history.push(snapshot()); restoreSnapshot(state.future.pop()); }
@@ -1052,7 +991,7 @@
         async function idbSaveProject() {
             const db = await idbReady;
             const meta = {
-                canvasW: state.canvasW, canvasH: state.canvasH, ratio: state.ratio, bgColor: state.bgColor, bgTransparent: state.bgTransparent, tracks: state.tracks, duration: state.duration,
+                canvasW: state.canvasW, canvasH: state.canvasH, ratio: state.ratio, bgColor: state.bgColor, tracks: state.tracks, duration: state.duration,
                 mediaMeta: state.mediaLibrary.map(m => ({ id: m.id, name: m.name, kind: m.kind, duration: m.duration, thumb: m.thumb }))
             };
             await new Promise((res, rej) => { const tx = db.transaction('project', 'readwrite'); tx.objectStore('project').put(JSON.stringify(meta, (k, v) => k === 'el' ? undefined : v), 'current'); tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
@@ -1077,9 +1016,7 @@
             }
             state.mediaLibrary = Object.values(byId);
             state.tracks = meta.tracks; state.duration = meta.duration || 10;
-            state.canvasW = meta.canvasW || state.canvasW; state.canvasH = meta.canvasH || state.canvasH;
-            state.ratio = meta.ratio || state.ratio; state.bgColor = meta.bgColor || state.bgColor;
-            state.bgTransparent = meta.bgTransparent || false;
+            state.canvasW = meta.canvasW || state.canvasW; state.canvasH = meta.canvasH || state.canvasH; state.ratio = meta.ratio || state.ratio; state.bgColor = meta.bgColor || state.bgColor;
             state.tracks.forEach(tr => tr.clips.forEach(c => { const lib = state.mediaLibrary.find(m => m.id === c.mediaId); if (lib) c.el = lib.el; }));
             renderAll();
             return true;
@@ -1114,6 +1051,7 @@
             recalcDuration(); pushHistory(); renderTimeline(); selectClip(clip.id); seekTo(clip.start);
         }
         function snapAndResolve(track, moving) {
+            // snap to neighbor edges within track
             const snapT = SNAP_PX / state.pxPerSec;
             let best = null;
             track.clips.forEach(c => {
@@ -1125,6 +1063,7 @@
             });
             if (best) moving.start += (best.target - best.cur);
             moving.start = Math.max(0, moving.start);
+            // prevent overlap on same track: push into nearest free gap instead of overlapping
             let again = true, guard = 0;
             while (again && guard < 20) {
                 again = false; guard++;
@@ -1139,20 +1078,9 @@
                 }
             }
         }
-
-        /* FIX #7: duration = max end of all clips, expands when clips grow, never locks them */
-        function recalcDuration() {
-            let max = 4;
-            state.tracks.forEach(tr => tr.clips.forEach(c => {
-                max = Math.max(max, c.start + c.dur);
-            }));
-            state.duration = max + 1.5;
-        }
-
+        function recalcDuration() { let max = 4; state.tracks.forEach(tr => tr.clips.forEach(c => max = Math.max(max, c.start + c.dur))); state.duration = max + 1.5; }
         function findClip(id) { for (const tr of state.tracks) for (const c of tr.clips) if (c.id === id) return { clip: c, track: tr }; return null; }
-        function selectClip(id) { state.selectedClipId = id; renderTimeline(); }
-
-        /* FIX #5: selectClip no longer auto-opens sheet. openClipProps only called explicitly */
+        function selectClip(id) { state.selectedClipId = id; renderTimeline(); if (id) openClipProps(id); }
         function deleteClip(id) { const f = findClip(id); if (!f) return; f.track.clips = f.track.clips.filter(c => c.id !== id); if (state.selectedClipId === id) state.selectedClipId = null; recalcDuration(); pushHistory(); renderTimeline(); closeSheet(); }
         function duplicateClip(id) {
             const f = findClip(id); if (!f) return;
@@ -1236,10 +1164,6 @@
             };
         }
         const TRACK_COLORS = { media: '#3b6fd6', audio: '#d6a23b', overlay: '#c97bd1' };
-
-        /* FIX #1: Long press to drag, short tap to open props */
-        const LONG_PRESS_MS = 300;
-
         function renderClipLanes() {
             const wrap = $('#tlTracks'); wrap.innerHTML = ''; wrap.style.width = timeToX(state.duration + 8) + 'px';
             state.tracks.forEach(tr => {
@@ -1251,7 +1175,6 @@
         }
         function showSnapline(x) { const sl = $('#snapline'); sl.style.left = x + 'px'; sl.classList.remove('hidden'); }
         function hideSnapline() { $('#snapline').classList.add('hidden'); }
-
         function renderClipEl(c, tr) {
             const div = document.createElement('div'); div.className = 'clip' + (c.id === state.selectedClipId ? ' selected' : '');
             div.style.left = timeToX(c.start) + 'px'; div.style.width = Math.max(8, timeToX(c.dur)) + 'px'; div.style.background = TRACK_COLORS[tr.type] || '#666';
@@ -1262,47 +1185,17 @@
             if (c.kenBurns) icons += '🎥';
             div.innerHTML = `<span class="clip-label">${label}</span><span class="clip-icons">${icons}</span><div class="handle l"></div><div class="handle r"></div>`;
 
-            /* FIX #1: distinguish tap vs long-press/drag */
             div.onpointerdown = e => {
                 if (e.target.classList.contains('handle')) return;
-                e.stopPropagation();
-
-                // Always select on any touch
-                selectClip(c.id);
-
+                e.stopPropagation(); selectClip(c.id);
                 try { div.setPointerCapture(e.pointerId); } catch (err) { }
-
-                const startX = e.clientX, startY = e.clientY;
-                const startLeft = c.start;
+                const startX = e.clientX, startLeft = c.start;
                 let moved = false;
-                let dragging = false;
-                let longPressTimer = null;
-                let cancelled = false;
-
-                // Start long-press timer — only after LONG_PRESS_MS we allow drag
-                longPressTimer = setTimeout(() => {
-                    dragging = true;
-                    div.classList.add('dragging');
-                }, LONG_PRESS_MS);
-
                 const onMove = ev => {
-                    ev.preventDefault();
-                    const dx = ev.clientX - startX;
-                    const dy = ev.clientY - startY;
-                    const dist = Math.hypot(dx, dy);
-
-                    // If moved significantly before long press, cancel long press (scroll intent)
-                    if (!dragging && dist > 6) {
-                        clearTimeout(longPressTimer);
-                        cancelled = true;
-                        return;
-                    }
-
-                    if (!dragging) return; // wait for long press
-                    moved = true;
-
-                    let dt = xToTime(dx);
+                    ev.preventDefault(); moved = true;
+                    let dt = xToTime(ev.clientX - startX);
                     let newStart = Math.max(0, startLeft + dt);
+                    // live snap preview against other clips on this track + playhead
                     const snapT = SNAP_PX / state.pxPerSec; let snapped = false;
                     const candidates = [state.currentTime];
                     tr.clips.forEach(o => { if (o.id !== c.id) { candidates.push(o.start); candidates.push(o.start + o.dur); } });
@@ -1314,41 +1207,19 @@
                     c.start = newStart;
                     div.style.left = timeToX(c.start) + 'px';
                 };
-
-                const onUp = ev => {
-                    clearTimeout(longPressTimer);
-                    window.removeEventListener('pointermove', onMove);
-                    window.removeEventListener('pointerup', onUp);
-                    window.removeEventListener('pointercancel', onUp);
+                const onUp = () => {
+                    window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); window.removeEventListener('pointercancel', onUp);
                     hideSnapline();
-                    div.classList.remove('dragging');
-
-                    const dx = ev.clientX - startX;
-                    const dy = ev.clientY - startY;
-                    const dist = Math.hypot(dx, dy);
-
-                    if (!moved && !cancelled && dist < 8) {
-                        // FIX #1: Short tap → open props
-                        openClipProps(c.id);
-                    } else if (moved) {
-                        snapAndResolve(tr, c);
-                        recalcDuration();
-                        pushHistory();
-                        renderTimeline();
-                    }
+                    if (moved) { snapAndResolve(tr, c); recalcDuration(); pushHistory(); renderTimeline(); }
                 };
-
                 window.addEventListener('pointermove', onMove, { passive: false });
                 window.addEventListener('pointerup', onUp);
                 window.addEventListener('pointercancel', onUp);
             };
-
             div.ondblclick = () => seekTo(c.start);
 
-            /* FIX #2: trim handles — left handle trims start, right handle trims end */
             div.querySelector('.handle.l').onpointerdown = e => {
-                e.stopPropagation();
-                try { e.target.setPointerCapture(e.pointerId); } catch (err) { }
+                e.stopPropagation(); try { e.target.setPointerCapture(e.pointerId); } catch (err) { }
                 const startX = e.clientX, startStart = c.start, startDur = c.dur, startTrim = c.trimStart;
                 const onMove = ev => {
                     ev.preventDefault();
@@ -1358,41 +1229,27 @@
                     c.start = newStart; c.dur = startDur - delta; c.trimStart = startTrim + delta * c.speed;
                     div.style.left = timeToX(c.start) + 'px'; div.style.width = Math.max(8, timeToX(c.dur)) + 'px';
                 };
-                const onUp = () => {
-                    window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); window.removeEventListener('pointercancel', onUp);
-                    recalcDuration(); pushHistory(); renderTimeline();
-                };
+                const onUp = () => { window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); window.removeEventListener('pointercancel', onUp); recalcDuration(); pushHistory(); renderTimeline(); };
                 window.addEventListener('pointermove', onMove, { passive: false }); window.addEventListener('pointerup', onUp); window.addEventListener('pointercancel', onUp);
             };
-
             div.querySelector('.handle.r').onpointerdown = e => {
-                e.stopPropagation();
-                try { e.target.setPointerCapture(e.pointerId); } catch (err) { }
+                e.stopPropagation(); try { e.target.setPointerCapture(e.pointerId); } catch (err) { }
                 const startX = e.clientX, startDur = c.dur;
-                // FIX #7: no hard maxDur for photo/text — allow extending freely; for video limit to source
-                const maxDur = (c.kind === 'video' && c.sourceDur) ? (c.sourceDur - c.trimStart) / (c.speed || 1) : Infinity;
+                const maxDur = c.sourceDur ? (c.sourceDur - c.trimStart) / c.speed : Infinity;
                 const onMove = ev => {
                     ev.preventDefault();
                     let dt = xToTime(ev.clientX - startX);
                     c.dur = clamp(startDur + dt, 0.15, maxDur === Infinity ? 9999 : maxDur);
                     div.style.width = Math.max(8, timeToX(c.dur)) + 'px';
-                    // FIX #7: live update duration as user drags right handle
-                    recalcDuration();
-                    updatePlayheadPos();
-                    $('#tcode').textContent = `${fmtTime(state.currentTime)} / ${fmtTime(state.duration)}`;
-                    renderRuler();
                 };
-                const onUp = () => {
-                    window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); window.removeEventListener('pointercancel', onUp);
-                    recalcDuration(); pushHistory(); renderTimeline();
-                };
+                const onUp = () => { window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); window.removeEventListener('pointercancel', onUp); recalcDuration(); pushHistory(); renderTimeline(); };
                 window.addEventListener('pointermove', onMove, { passive: false }); window.addEventListener('pointerup', onUp); window.addEventListener('pointercancel', onUp);
             };
             return div;
         }
         function updatePlayheadPos() { $('#playhead').style.left = timeToX(state.currentTime) + 'px'; }
 
-        /* =================== KEYBOARD =================== */
+        /* =================== KEYBOARD (desktop testing only) =================== */
         window.addEventListener('keydown', e => {
             if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) return;
             if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
@@ -1402,7 +1259,7 @@
         const stage = $('#stage'); const ctx = stage.getContext('2d');
         let lastFrameTs = null;
         const audioCtxMain = new (window.AudioContext || window.webkitAudioContext)();
-        const mediaGainNodes = new Map();
+        const mediaSourceByEl = new WeakMap(); // el -> {src, gain} — постоянная маршрутизация Web Audio на элемент
         let isExporting = false;
 
         function activeClipsAt(time) {
@@ -1423,7 +1280,8 @@
             if (c.fadeIn && relT < c.fadeIn) vol *= relT / c.fadeIn;
             if (c.fadeOut && (c.dur - relT) < c.fadeOut) vol *= Math.max(0, (c.dur - relT) / c.fadeOut);
             el.volume = clamp(vol, 0, 1); el.muted = false;
-            const needSeek = !shouldPlay || c.reverse || Math.abs(el.currentTime - target) > 0.15;
+            // допуск рассинхрона увеличен, чтобы не дёргать currentTime каждый кадр и не вызывать заикания/фриз звука
+            const needSeek = !shouldPlay || c.reverse || Math.abs(el.currentTime - target) > 0.35;
             if (needSeek) { try { el.currentTime = clamp(target, 0, (el.duration || target) + 0.05); } catch (e) { } }
             if (shouldPlay && !c.reverse) { el.playbackRate = clamp(c.speed || 1, 0.0625, 16); if (el.paused) el.play().catch(() => { }); }
             else if (!el.paused) { try { el.pause(); } catch (e) { } }
@@ -1531,6 +1389,7 @@
             const rel = c.dur - relT; if (rel >= d) return 1; return clamp(rel / d, 0, 1);
         }
 
+        /* ---- per-clip screen effects (attached to media clip itself) ---- */
         let grainCanvas = null;
         function ensureGrain() { if (grainCanvas) return; grainCanvas = document.createElement('canvas'); grainCanvas.width = 128; grainCanvas.height = 128; const gctx = grainCanvas.getContext('2d'); const id = gctx.createImageData(128, 128); for (let i = 0; i < id.data.length; i += 4) { const v = Math.random() * 255; id.data[i] = id.data[i + 1] = id.data[i + 2] = v; id.data[i + 3] = 255; } gctx.putImageData(id, 0, 0); }
         function applyClipEffects(entry, globalTime) {
@@ -1560,22 +1419,19 @@
 
         function renderFrame(time) {
             ctx.clearRect(0, 0, stage.width, stage.height); ctx.filter = 'none'; ctx.globalAlpha = 1;
-            // FIX #3: support transparent background
-            if (state.bgTransparent) {
-                ctx.clearRect(0, 0, stage.width, stage.height);
-            } else {
-                ctx.fillStyle = state.bgColor; ctx.fillRect(0, 0, stage.width, stage.height);
-            }
+            ctx.fillStyle = state.bgColor; ctx.fillRect(0, 0, stage.width, stage.height);
             const allActive = activeClipsAt(time);
             const mediaEntries = allActive.filter(e => e.track.type === 'media').sort((a, b) => a.clip.start - b.clip.start);
             drawBackgroundBlur(mediaEntries[mediaEntries.length - 1]);
+            const order = { media: 1, overlay: 4, audio: 0 };
+            const visEntries = allActive.filter(e => e.track.type !== 'audio' ? (e.track.type === 'media' ? true : e.clip.kind !== '') : false);
             allActive.forEach(entry => {
                 try {
                     if (entry.track.type === 'audio') { ensureMediaPlayback(entry.clip, time, state.playing, entry.track); return; }
                     if (entry.clip.kind === 'video') ensureMediaPlayback(entry.clip, time, state.playing, entry.track);
                     drawClip(entry, time);
                     if (entry.track.type === 'media') applyClipEffects(entry, time);
-                } catch (err) { }
+                } catch (err) { /* fail-safe: skip broken clip */ }
             });
             state.tracks.forEach(tr => tr.clips.forEach(c => {
                 const isActive = time >= c.start && time < c.start + c.dur;
@@ -1601,75 +1457,6 @@
         function stopPlayback() { state.playing = false; $('#btnPlay').textContent = '▶'; pauseAllMedia(); }
         $('#btnPlay').onclick = togglePlay;
         $('#btnToStart').onclick = () => seekTo(0);
-
-        /* =================== FIX #3: BACKGROUND PICKER =================== */
-        const BG_PRESETS = [
-            { color: '#000000', label: 'Чёрный' },
-            { color: '#ffffff', label: 'Белый' },
-            { color: '#1a1a2e', label: 'Ночь' },
-            { color: '#16213e', label: 'Синий' },
-            { color: '#0f3460', label: 'Океан' },
-            { color: '#e94560', label: 'Красный' },
-            { color: '#533483', label: 'Фиолет' },
-            { color: '#2d6a4f', label: 'Зелёный' },
-            { color: '#f4a261', label: 'Оранжевый' },
-            { color: null, label: 'Прозрачный' },
-        ];
-
-        function updateBgSwatch() {
-            const swatch = $('#bgSwatch');
-            if (state.bgTransparent) {
-                swatch.style.background = 'repeating-conic-gradient(#555 0% 25%, #888 0% 50%) 0 0 / 8px 8px';
-            } else {
-                swatch.style.background = state.bgColor;
-            }
-        }
-
-        $('#btnBg').onclick = () => openSheet('Фон', (body) => {
-            body.innerHTML = '';
-            const pt = document.createElement('div'); pt.className = 'panel-title'; pt.textContent = 'Быстрые варианты'; body.appendChild(pt);
-            const grid = document.createElement('div'); grid.className = 'bg-color-grid';
-
-            BG_PRESETS.forEach(p => {
-                const btn = document.createElement('button');
-                const isActive = p.color === null ? state.bgTransparent : (!state.bgTransparent && state.bgColor === p.color);
-                btn.className = 'bg-color-swatch' + (isActive ? ' active' : '');
-                if (p.color === null) {
-                    btn.classList.add('bg-transparent-swatch');
-                    btn.title = 'Прозрачный';
-                } else {
-                    btn.style.background = p.color;
-                    btn.title = p.label;
-                }
-                btn.onclick = () => {
-                    if (p.color === null) {
-                        state.bgTransparent = true;
-                    } else {
-                        state.bgTransparent = false;
-                        state.bgColor = p.color;
-                    }
-                    updateBgSwatch();
-                    pushHistory();
-                    renderFrame(state.currentTime);
-                    // refresh active states without closing sheet
-                    grid.querySelectorAll('.bg-color-swatch').forEach((b, i) => {
-                        const pp = BG_PRESETS[i];
-                        const active = pp.color === null ? state.bgTransparent : (!state.bgTransparent && state.bgColor === pp.color);
-                        b.classList.toggle('active', active);
-                    });
-                };
-                grid.appendChild(btn);
-            });
-            body.appendChild(grid);
-
-            const pt2 = document.createElement('div'); pt2.className = 'panel-title'; pt2.textContent = 'Своё цвет'; body.appendChild(pt2);
-            const customRow = document.createElement('div'); customRow.style.cssText = 'display:flex;align-items:center;gap:12px;margin-bottom:8px';
-            const colorIn = document.createElement('input'); colorIn.type = 'color'; colorIn.value = state.bgColor; colorIn.style.cssText = 'flex:1;height:48px;border:none;border-radius:10px;cursor:pointer';
-            colorIn.oninput = () => { state.bgTransparent = false; state.bgColor = colorIn.value; updateBgSwatch(); renderFrame(state.currentTime); };
-            colorIn.onchange = () => { pushHistory(); };
-            customRow.appendChild(colorIn);
-            body.appendChild(customRow);
-        });
 
         /* =================== XFORM OVERLAY =================== */
         const xformBox = $('#xformBox');
@@ -1753,8 +1540,13 @@
             bg.innerHTML = `<div class="sheet"><div class="sheet-handle"></div><div class="sheet-head">${title}<button class="sheet-close">✕</button></div><div class="sheet-tabs hidden" id="sheetTabs"></div><div class="sheet-body" id="sheetBody"></div></div>`;
             document.body.appendChild(bg);
             currentSheetBg = bg;
-            bg.onclick = e => { if (e.target === bg) closeSheet(); };
+            // Защита от "клика-призрака": когда лист открывается по pointerdown на клипе,
+            // тот же тач/клик может затем долететь до фона sheet-bg и мгновенно его закрыть.
+            // Поэтому игнорируем клики по фону в первые 300мс после открытия.
+            const openedAt = Date.now();
+            bg.onclick = e => { if (e.target === bg && Date.now() - openedAt > 300) closeSheet(); };
             bg.querySelector('.sheet-close').onclick = closeSheet;
+            // swipe down to close
             const handle = bg.querySelector('.sheet-handle'); const sheetEl = bg.querySelector('.sheet');
             let startY = 0, curY = 0, dragging = false;
             handle.onpointerdown = e => { dragging = true; startY = e.clientY; try { handle.setPointerCapture(e.pointerId); } catch (err) { } };
@@ -1897,7 +1689,6 @@
         }
 
         /* =================== CLIP PROPERTIES SHEET =================== */
-        /* FIX #5: activeTab is stable — changes ONLY when user clicks a tab button, NOT when applying settings */
         function openClipProps(id, focusTab) {
             const f = findClip(id); if (!f) return;
             const c = f.clip;
@@ -1910,19 +1701,7 @@
             openSheet(c.kind === 'text' ? (c.text.content.slice(0, 18) || 'Текст') : c.name, (body, tabsEl) => {
                 if (tabsFor.length > 1) {
                     tabsEl.classList.remove('hidden');
-                    tabsFor.forEach(t => {
-                        const b = document.createElement('button');
-                        b.className = 'sheet-tab' + (t === activeTab ? ' active' : '');
-                        b.textContent = t;
-                        b.onclick = () => {
-                            // FIX #5: only switch tab on explicit click, no auto-switch elsewhere
-                            activeTab = t;
-                            renderTab();
-                            $all('.sheet-tab', tabsEl).forEach(x => x.classList.remove('active'));
-                            b.classList.add('active');
-                        };
-                        tabsEl.appendChild(b);
-                    });
+                    tabsFor.forEach(t => { const b = document.createElement('button'); b.className = 'sheet-tab' + (t === activeTab ? ' active' : ''); b.textContent = t; b.onclick = () => { activeTab = t; renderTab(); $all('.sheet-tab', tabsEl).forEach(x => x.classList.remove('active')); b.classList.add('active'); }; tabsEl.appendChild(b); });
                 }
                 function renderTab() {
                     body.innerHTML = '';
@@ -1942,44 +1721,25 @@
             const dispVal = step < 1 ? value.toFixed(2) : Math.round(value);
             wrap.innerHTML = `<label>${label} <span>${dispVal}</span></label>`;
             const input = document.createElement('input'); input.type = 'range'; input.min = min; input.max = max; input.step = step; input.value = value;
-            input.oninput = () => {
-                const v = Number(input.value);
-                wrap.querySelector('span').textContent = step < 1 ? v.toFixed(2) : v;
-                onChange(v);
-                renderFrame(state.currentTime);
-                // FIX #5: DO NOT call openClipProps or renderTab here — only update canvas
-            };
+            input.oninput = () => { const v = Number(input.value); wrap.querySelector('span').textContent = step < 1 ? v.toFixed(2) : v; onChange(v); renderFrame(state.currentTime); };
             input.onchange = () => { if (onCommit) onCommit(); pushHistory(); };
             wrap.appendChild(input); return wrap;
         }
-        function mkChip(label, active, onClick) {
-            const b = document.createElement('button');
-            b.className = 'chip' + (active ? ' active' : '');
-            b.textContent = label;
-            b.onclick = onClick;
-            return b;
-        }
+        function mkChip(label, active, onClick) { const b = document.createElement('button'); b.className = 'chip' + (active ? ' active' : ''); b.textContent = label; b.onclick = onClick; return b; }
 
         function renderPropsTab(body, c) {
             if (c.kind === 'video') {
                 const pt = document.createElement('div'); pt.className = 'panel-title'; pt.textContent = 'Скорость'; body.appendChild(pt);
                 const row = document.createElement('div'); row.className = 'btn-row'; row.style.marginBottom = '14px';
-                [['0.5x', 0.5], ['1x', 1], ['1.5x', 1.5], ['2x', 2]].forEach(([lbl, spd]) => {
-                    row.appendChild(mkChip(lbl, Math.abs(c.speed - spd) < 0.01, () => {
-                        c.speed = spd; pushHistory();
-                        // FIX #5: update chip states in-place instead of reopening sheet
-                        row.querySelectorAll('.chip').forEach((chip, i) => chip.classList.toggle('active', Math.abs([0.5,1,1.5,2][i] - spd) < 0.01));
-                        renderFrame(state.currentTime);
-                    }));
-                });
+                [['0.5x', 0.5], ['1x', 1], ['1.5x', 1.5], ['2x', 2]].forEach(([lbl, spd]) => { row.appendChild(mkChip(lbl, Math.abs(c.speed - spd) < 0.01, () => { c.speed = spd; pushHistory(); openClipProps(c.id); })); });
                 body.appendChild(row);
                 const revBtn = document.createElement('button'); revBtn.className = 'chip' + (c.reverse ? ' active' : ''); revBtn.style.cssText = 'width:100%;justify-content:center;margin-bottom:14px;height:44px';
                 revBtn.textContent = c.reverse ? '⏪ Реверс: включен' : '⏪ Реверс: выключен';
-                revBtn.onclick = () => { c.reverse = !c.reverse; revBtn.classList.toggle('active', c.reverse); revBtn.textContent = c.reverse ? '⏪ Реверс: включен' : '⏪ Реверс: выключен'; pushHistory(); renderFrame(state.currentTime); };
+                revBtn.onclick = () => { c.reverse = !c.reverse; pushHistory(); openClipProps(c.id); };
                 body.appendChild(revBtn);
                 const muteBtn = document.createElement('button'); muteBtn.className = 'chip' + (c.volume === 0 ? ' active' : ''); muteBtn.style.cssText = 'width:100%;justify-content:center;margin-bottom:10px;height:44px';
                 muteBtn.textContent = c.volume === 0 ? '🔇 Звук выключен' : '🔊 Звук включен';
-                muteBtn.onclick = () => { c.volume = c.volume === 0 ? 100 : 0; muteBtn.classList.toggle('active', c.volume === 0); muteBtn.textContent = c.volume === 0 ? '🔇 Звук выключен' : '🔊 Звук включен'; pushHistory(); renderFrame(state.currentTime); };
+                muteBtn.onclick = () => { c.volume = c.volume === 0 ? 100 : 0; pushHistory(); openClipProps(c.id); };
                 body.appendChild(muteBtn);
                 body.appendChild(sliderField('Громкость', c.volume, 0, 200, 1, v => c.volume = v));
             }
@@ -1998,13 +1758,7 @@
         function renderColorTab(body, c) {
             const ft = document.createElement('div'); ft.className = 'panel-title'; ft.textContent = 'Фильтр'; body.appendChild(ft);
             const grid = document.createElement('div'); grid.className = 'btn-row';
-            // FIX #5: update chips in-place, no sheet reopen
-            FILTER_PRESETS.forEach(([key, label]) => {
-                grid.appendChild(mkChip(label, c.color.filter === key, () => {
-                    c.color.filter = key; pushHistory(); renderFrame(state.currentTime);
-                    grid.querySelectorAll('.chip').forEach((chip, i) => chip.classList.toggle('active', FILTER_PRESETS[i][0] === key));
-                }));
-            });
+            FILTER_PRESETS.forEach(([key, label]) => { grid.appendChild(mkChip(label, c.color.filter === key, () => { c.color.filter = key; pushHistory(); openClipProps(c.id); })); });
             body.appendChild(grid);
             const ct = document.createElement('div'); ct.className = 'panel-title'; ct.textContent = 'Коррекция'; body.appendChild(ct);
             COLOR_PARAMS.forEach(([key, label, min, max]) => { body.appendChild(sliderField(label, c.color[key], min, max, 1, v => c.color[key] = v)); });
@@ -2020,51 +1774,26 @@
             FX_LIST.forEach(([key, label, ic]) => {
                 const active = c.effects.some(e => e.type === key);
                 const b = document.createElement('button'); b.className = 'opt-btn' + (active ? ' active' : ''); b.innerHTML = `<span class="ic">${ic}</span>${label}`;
-                // FIX #5: toggle effect without reopening sheet
-                b.onclick = () => {
-                    const idx = c.effects.findIndex(e => e.type === key);
-                    if (idx >= 0) c.effects.splice(idx, 1); else c.effects.push({ type: key, intensity: 50 });
-                    b.classList.toggle('active', c.effects.some(e => e.type === key));
-                    pushHistory(); renderFrame(state.currentTime);
-                    // refresh intensity sliders
-                    const existingSliders = body.querySelector('#fxSliders');
-                    if (existingSliders) existingSliders.remove();
-                    if (c.effects.length) {
-                        const st = document.createElement('div'); st.id = 'fxSliders';
-                        const pt = document.createElement('div'); pt.className = 'panel-title'; pt.textContent = 'Сила эффекта'; st.appendChild(pt);
-                        c.effects.forEach(eff => { st.appendChild(sliderField(FX_LIST.find(f => f[0] === eff.type)[1], eff.intensity, 0, 100, 1, v => eff.intensity = v)); });
-                        body.appendChild(st);
-                    }
-                };
+                b.onclick = () => { const idx = c.effects.findIndex(e => e.type === key); if (idx >= 0) c.effects.splice(idx, 1); else c.effects.push({ type: key, intensity: 50 }); pushHistory(); openClipProps(c.id, 'fx'); };
                 grid.appendChild(b);
             });
             body.appendChild(grid);
             if (c.effects.length) {
-                const st = document.createElement('div'); st.id = 'fxSliders';
-                const pt = document.createElement('div'); pt.className = 'panel-title'; pt.textContent = 'Сила эффекта'; st.appendChild(pt);
-                c.effects.forEach(eff => { st.appendChild(sliderField(FX_LIST.find(f => f[0] === eff.type)[1], eff.intensity, 0, 100, 1, v => eff.intensity = v)); });
-                body.appendChild(st);
+                const pt = document.createElement('div'); pt.className = 'panel-title'; pt.textContent = 'Сила эффекта'; body.appendChild(pt);
+                c.effects.forEach(eff => { body.appendChild(sliderField(FX_LIST.find(f => f[0] === eff.type)[1], eff.intensity, 0, 100, 1, v => eff.intensity = v)); });
             }
         }
         const TRANS_LIST = [['fade', 'Fade'], ['slide', 'Slide'], ['zoom', 'Zoom'], ['push', 'Push'], ['flash', 'Flash']];
         function renderTransTab(body, c) {
             const pt1 = document.createElement('div'); pt1.className = 'panel-title'; pt1.textContent = 'Переход в начале'; body.appendChild(pt1);
             const g1 = document.createElement('div'); g1.className = 'btn-row';
-            // FIX #5: in-place chip updates, no sheet reopen
-            const buildTransChips = (group, getCurrentFn, setFn) => {
-                group.appendChild(mkChip('Нет', !getCurrentFn(), () => { setFn(null); pushHistory(); renderFrame(state.currentTime); group.querySelectorAll('.chip').forEach((ch, i) => ch.classList.toggle('active', i === 0 && !getCurrentFn())); }));
-                TRANS_LIST.forEach(([key, label], idx) => {
-                    group.appendChild(mkChip(label, getCurrentFn() && getCurrentFn().type === key, () => {
-                        setFn({ type: key, dur: 0.5 }); pushHistory(); renderFrame(state.currentTime);
-                        group.querySelectorAll('.chip').forEach((ch, i) => ch.classList.toggle('active', i > 0 && TRANS_LIST[i-1] && TRANS_LIST[i-1][0] === key));
-                    }));
-                });
-            };
-            buildTransChips(g1, () => c.transitionIn, v => c.transitionIn = v);
+            g1.appendChild(mkChip('Нет', !c.transitionIn, () => { c.transitionIn = null; pushHistory(); openClipProps(c.id, 'fx'); }));
+            TRANS_LIST.forEach(([key, label]) => { g1.appendChild(mkChip(label, c.transitionIn && c.transitionIn.type === key, () => { c.transitionIn = { type: key, dur: 0.5 }; pushHistory(); openClipProps(c.id, 'fx'); })); });
             body.appendChild(g1);
             const pt2 = document.createElement('div'); pt2.className = 'panel-title'; pt2.textContent = 'Переход в конце'; body.appendChild(pt2);
             const g2 = document.createElement('div'); g2.className = 'btn-row';
-            buildTransChips(g2, () => c.transitionOut, v => c.transitionOut = v);
+            g2.appendChild(mkChip('Нет', !c.transitionOut, () => { c.transitionOut = null; pushHistory(); openClipProps(c.id, 'fx'); }));
+            TRANS_LIST.forEach(([key, label]) => { g2.appendChild(mkChip(label, c.transitionOut && c.transitionOut.type === key, () => { c.transitionOut = { type: key, dur: 0.5 }; pushHistory(); openClipProps(c.id, 'fx'); })); });
             body.appendChild(g2);
             if (c.transitionIn || c.transitionOut) {
                 const dur = (c.transitionIn || c.transitionOut).dur;
@@ -2075,8 +1804,7 @@
             if (c.kind === 'photo') {
                 const kb = document.createElement('button'); kb.className = 'chip' + (c.kenBurns ? ' active' : ''); kb.style.cssText = 'width:100%;justify-content:center;height:46px;margin-bottom:10px';
                 kb.textContent = c.kenBurns ? '🎥 Ken Burns: включен' : '🎥 Ken Burns: выключен';
-                // FIX #5: toggle in-place
-                kb.onclick = () => { c.kenBurns = !c.kenBurns; if (c.kenBurns) c._kbDX = (Math.random() > 0.5 ? 1 : -1) * (20 + Math.random() * 30); kb.classList.toggle('active', c.kenBurns); kb.textContent = c.kenBurns ? '🎥 Ken Burns: включен' : '🎥 Ken Burns: выключен'; pushHistory(); };
+                kb.onclick = () => { c.kenBurns = !c.kenBurns; if (c.kenBurns) c._kbDX = (Math.random() > 0.5 ? 1 : -1) * (20 + Math.random() * 30); pushHistory(); openClipProps(c.id); };
                 body.appendChild(kb);
                 const note = document.createElement('div'); note.className = 'note'; note.textContent = 'Плавное масштабирование и панорама — хорошо смотрится на фото.';
                 body.appendChild(note);
@@ -2095,15 +1823,14 @@
             body.querySelector('#txtStroke').oninput = e => { c.text.stroke = e.target.value; renderFrame(state.currentTime); };
             body.querySelector('#txtStroke').onchange = () => pushHistory();
             body.appendChild(sliderField('Размер', c.text.size, 16, 140, 1, v => c.text.size = v));
-            const shBtn = mkChip('Тень', c.text.useShadow, () => { c.text.useShadow = !c.text.useShadow; shBtn.classList.toggle('active', c.text.useShadow); pushHistory(); renderFrame(state.currentTime); });
-            const stBtn = mkChip('Обводка вкл', c.text.useStroke, () => { c.text.useStroke = !c.text.useStroke; stBtn.classList.toggle('active', c.text.useStroke); pushHistory(); renderFrame(state.currentTime); });
+            const shBtn = mkChip('Тень', c.text.useShadow, () => { c.text.useShadow = !c.text.useShadow; pushHistory(); openClipProps(c.id); });
+            const stBtn = mkChip('Обводка вкл', c.text.useStroke, () => { c.text.useStroke = !c.text.useStroke; pushHistory(); openClipProps(c.id); });
             const br = document.createElement('div'); br.className = 'btn-row'; br.style.marginTop = '8px'; br.appendChild(shBtn); br.appendChild(stBtn); body.appendChild(br);
         }
         function renderAudioTab(body, c) {
             const muteBtn = document.createElement('button'); muteBtn.className = 'chip' + (c.volume === 0 ? ' active' : ''); muteBtn.style.cssText = 'width:100%;justify-content:center;height:46px;margin-bottom:14px';
             muteBtn.textContent = c.volume === 0 ? '🔇 Звук выключен' : '🔊 Звук включен';
-            // FIX #5: in-place toggle
-            muteBtn.onclick = () => { c.volume = c.volume === 0 ? 100 : 0; muteBtn.classList.toggle('active', c.volume === 0); muteBtn.textContent = c.volume === 0 ? '🔇 Звук выключен' : '🔊 Звук включен'; pushHistory(); renderFrame(state.currentTime); };
+            muteBtn.onclick = () => { c.volume = c.volume === 0 ? 100 : 0; pushHistory(); openClipProps(c.id); };
             body.appendChild(muteBtn);
             body.appendChild(sliderField('Громкость', c.volume, 0, 200, 1, v => c.volume = v));
             body.appendChild(sliderField('Fade In, сек', c.fadeIn, 0, 5, 0.1, v => c.fadeIn = v));
@@ -2195,87 +1922,103 @@
             pushHistory(); renderFrame(state.currentTime);
         };
 
-        /* =================== FIX #6: EXPORT — no black screen =================== */
-        function detectMp4Mime() {
-            const candidates = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4;codecs="avc1.42E01E"', 'video/mp4'];
-            for (const c of candidates) { if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(c)) return c; }
-            return null;
-        }
-        function detectWebmMime() {
-            const candidates = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
-            for (const c of candidates) { if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(c)) return c; }
+        /* =================== EXPORT (optimized, MP4 with WebM fallback) =================== */
+        function detectExportMime() {
+            // Сначала пробуем MP4 (лучше совместим с галереями телефонов), затем WebM как запасной вариант —
+            // на многих десктопных браузерах (и части мобильных) MediaRecorder вообще не умеет писать MP4,
+            // из-за чего раньше экспорт ВСЕГДА падал с ошибкой "браузер не поддерживает".
+            const candidates = [
+                ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'mp4'],
+                ['video/mp4;codecs="avc1.42E01E"', 'mp4'],
+                ['video/mp4', 'mp4'],
+                ['video/webm;codecs=vp9,opus', 'webm'],
+                ['video/webm;codecs=vp8,opus', 'webm'],
+                ['video/webm', 'webm'],
+            ];
+            for (const [mime, ext] of candidates) {
+                if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(mime)) return { mime, ext };
+            }
             return null;
         }
         $('#btnExport').onclick = async () => {
-            // FIX #6: prefer webm (universal support), fall back to mp4
-            const mime = detectWebmMime() || detectMp4Mime();
-            if (!mime) { toast('Этот браузер не поддерживает запись видео. Обновите Chrome.', true); return; }
+            if (isExporting) return;
+            const found = detectExportMime();
+            if (!found) { toast('Этот браузер не поддерживает запись видео. Обновите Chrome.', true); return; }
             if (!state.tracks.some(t => t.clips.length)) { toast('Сначала добавьте хотя бы один клип', true); return; }
-            await runExport(mime);
+            try {
+                await runExport(found);
+            } catch (err) {
+                console.error('Export failed:', err);
+                toast('Ошибка экспорта: ' + (err && err.message ? err.message : 'неизвестная ошибка'), true);
+                $('#exportOverlay').classList.add('hidden');
+                isExporting = false;
+            }
         };
-        async function runExport(mime) {
+        async function runExport({ mime, ext }) {
             isExporting = true;
             const overlay = $('#exportOverlay'); overlay.classList.remove('hidden');
             const fill = $('#exportBarFill'); const pct = $('#exportPct'); fill.style.width = '0%'; pct.textContent = '0%';
             $('#bgBlur').classList.add('hidden');
 
+            await audioCtxMain.resume().catch(() => { });
+
+            // 720p for speed; matches project aspect ratio
             const projRatio = state.canvasW / state.canvasH;
             let outW = 1280, outH = Math.round(outW / projRatio);
             if (outH > 1280) { outH = 1280; outW = Math.round(outH * projRatio); }
-            // Ensure even dimensions (required by some codecs)
-            outW = outW % 2 === 0 ? outW : outW - 1;
-            outH = outH % 2 === 0 ? outH : outH - 1;
-
             const exportCanvas = document.createElement('canvas'); exportCanvas.width = outW; exportCanvas.height = outH;
             const ectx = exportCanvas.getContext('2d');
 
             const wasPlaying = state.playing; stopPlayback();
-
-            // FIX #6: setup audio destination before starting recorder
             const dest = audioCtxMain.createMediaStreamDestination();
+
+            // ВАЖНО: audioCtxMain.createMediaElementSource(el) можно вызвать на одном и том же
+            // <video>/<audio> элементе только ОДИН РАЗ за всё время жизни страницы — после этого
+            // звук элемента навсегда перестаёт идти "напрямую" и течёт только туда, куда мы его
+            // явно подключили в Web Audio графе. Раньше код подключал звук ТОЛЬКО к `dest`
+            // (для записи), но не к колонкам (audioCtxMain.destination) — поэтому после первой
+            // попытки экспорта звук этого клипа пропадал из предпросмотра НАВСЕГДА.
+            // Плюс источник создавался по id клипа, а не по самому элементу: если один и тот же
+            // файл использован в двух клипах (дубликат / повторное добавление из медиатеки),
+            // второй вызов createMediaElementSource на том же элементе кидал исключение.
+            // Теперь: 1 элемент -> максимум 1 источник (WeakMap по el), подключаем И к колонкам,
+            // И к записи — звук больше никогда не "пропадает".
             state.tracks.forEach(tr => tr.clips.forEach(c => {
                 if (c.el && (c.kind === 'video' || c.kind === 'music' || c.kind === 'voice')) {
                     try {
-                        if (!mediaGainNodes.has(c.id)) {
+                        let node = mediaSourceByEl.get(c.el);
+                        if (!node) {
                             const src = audioCtxMain.createMediaElementSource(c.el);
                             const gain = audioCtxMain.createGain();
-                            src.connect(gain); gain.connect(dest);
-                            gain.connect(audioCtxMain.destination); // also play during export
-                            mediaGainNodes.set(c.id, { src, gain });
+                            src.connect(gain);
+                            gain.connect(audioCtxMain.destination); // сохраняем нормальный звук в превью навсегда
+                            node = { src, gain };
+                            mediaSourceByEl.set(c.el, node);
                         }
-                    } catch (e) { }
+                        node.gain.connect(dest); // плюс отдельная ветка на запись для текущего экспорта
+                    } catch (e) { console.warn('Не удалось подключить аудио-источник клипа', c.name, e); }
                 }
             }));
 
             const fps = 24;
             const videoStream = exportCanvas.captureStream(fps);
-            const audioTracks = dest.stream.getAudioTracks();
-            const combined = new MediaStream([...videoStream.getVideoTracks(), ...audioTracks]);
-
+            const combined = new MediaStream([...videoStream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
             let recorder;
             try { recorder = new MediaRecorder(combined, { mimeType: mime, videoBitsPerSecond: 4500000 }); }
-            catch (e) { try { recorder = new MediaRecorder(combined, { mimeType: mime }); } catch (e2) { toast('Не удалось начать запись', true); overlay.classList.add('hidden'); isExporting = false; return; } }
+            catch (e) {
+                try { recorder = new MediaRecorder(combined, { mimeType: mime }); }
+                catch (e2) {
+                    overlay.classList.add('hidden'); isExporting = false;
+                    if (wasPlaying) startPlayback();
+                    throw e2;
+                }
+            }
+            let recorderErr = null;
+            recorder.onerror = e => { recorderErr = e.error || e; };
+            const chunks = []; recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
 
-            const chunks = [];
-            recorder.ondataavailable = e => { if (e.data && e.data.size > 0) chunks.push(e.data); };
-
-            // FIX #6: Render a frame BEFORE starting recorder so first frame is not black
-            state.currentTime = 0;
-            renderFrame(0);
-            ectx.clearRect(0, 0, outW, outH);
-            ectx.fillStyle = state.bgTransparent ? 'rgba(0,0,0,0)' : state.bgColor;
-            ectx.fillRect(0, 0, outW, outH);
-            ectx.drawImage(stage, 0, 0, outW, outH);
-
-            // FIX #6: Wait for stream to be ready before starting record
-            await new Promise(r => setTimeout(r, 100));
-
-            state.playing = true; lastFrameTs = null;
-            recorder.start(100); // smaller chunks = less risk of missing data
-
-            // FIX #6: wait a tiny bit after start before the loop to guarantee first frame is captured
-            await new Promise(r => setTimeout(r, 80));
-
+            state.currentTime = 0; state.playing = true; lastFrameTs = null;
+            recorder.start(250);
             const totalDur = state.duration;
 
             await new Promise(resolve => {
@@ -2283,50 +2026,39 @@
                     if (lastFrameTs == null) lastFrameTs = ts;
                     const dt = (ts - lastFrameTs) / 1000; lastFrameTs = ts;
                     state.currentTime += dt;
-
                     const p = clamp(state.currentTime / totalDur, 0, 1);
                     fill.style.width = (p * 100).toFixed(0) + '%'; pct.textContent = (p * 100).toFixed(0) + '%';
-
-                    renderFrame(state.currentTime);
-                    ectx.clearRect(0, 0, outW, outH);
-                    if (!state.bgTransparent) { ectx.fillStyle = state.bgColor; ectx.fillRect(0, 0, outW, outH); }
-                    ectx.drawImage(stage, 0, 0, outW, outH);
-
                     if (state.currentTime >= totalDur) {
-                        state.playing = false;
-                        // FIX #6: give recorder time to flush last frames before stopping
-                        setTimeout(() => {
-                            recorder.requestData();
-                            setTimeout(() => recorder.stop(), 200);
-                        }, 100);
-                        resolve();
-                        return;
+                        renderFrame(totalDur); ectx.clearRect(0, 0, outW, outH); ectx.fillStyle = state.bgColor; ectx.fillRect(0, 0, outW, outH); ectx.drawImage(stage, 0, 0, outW, outH);
+                        state.playing = false; setTimeout(() => recorder.stop(), 200); resolve(); return;
                     }
+                    renderFrame(state.currentTime);
+                    ectx.clearRect(0, 0, outW, outH); ectx.fillStyle = state.bgColor; ectx.fillRect(0, 0, outW, outH); ectx.drawImage(stage, 0, 0, outW, outH);
                     requestAnimationFrame(exportTick);
                 }
                 requestAnimationFrame(exportTick);
             });
 
             await new Promise(r => { recorder.onstop = r; });
+            if (recorderErr) throw (recorderErr instanceof Error ? recorderErr : new Error('Ошибка MediaRecorder'));
+            if (!chunks.length) throw new Error('Запись пустая — ни одного кадра не сохранилось');
 
-            if (!chunks.length) { toast('Не удалось записать видео', true); overlay.classList.add('hidden'); isExporting = false; return; }
-
-            const isWebm = mime.startsWith('video/webm');
-            const ext = isWebm ? 'webm' : 'mp4';
-            const blob = new Blob(chunks, { type: mime });
+            const blobType = mime.split(';')[0]; // 'video/mp4' или 'video/webm', без codecs=...
+            const blob = new Blob(chunks, { type: blobType });
             const url = URL.createObjectURL(blob);
-            const a = document.createElement('a'); a.href = url; a.download = `video.${ext}`; a.click();
-            setTimeout(() => URL.revokeObjectURL(url), 5000);
-
+            const a = document.createElement('a'); a.href = url; a.download = 'video.' + ext; a.click();
             overlay.classList.add('hidden');
             isExporting = false;
-            toast(`Готово! Видео сохранено (${ext}) ✅`);
+            toast('Готово! Видео сохранено ✅');
             if (wasPlaying) startPlayback();
         }
 
+        /* =================== NEW PROJECT =================== */
+        // long-press undo button area not used; provide reset via double tap top spacer (kept minimal, no extra clutter button)
+
         /* =================== INIT =================== */
         (function init() {
-            renderTracks(); renderTimeline(); updateBgSwatch();
+            renderTracks(); renderTimeline();
             tryRestoreAutosave().then(restored => { $('#autosaveTag').textContent = restored ? 'Восстановлено' : 'Готово'; }).catch(() => { $('#autosaveTag').textContent = 'Автосохранение недоступно'; });
         })();
     </script>

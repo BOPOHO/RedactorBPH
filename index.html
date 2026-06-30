@@ -2090,7 +2090,17 @@
             }));
 
             const fps = 24;
-            const videoStream = exportCanvas.captureStream(fps);
+            // ВАЖНО: captureStream(fps) в "автоматическом" режиме отдаёт кадр в запись каждый раз,
+            // когда меняется содержимое canvas — а это происходит НЕРАВНОМЕРНО, если рендер не
+            // успевает за реальным временем (тяжёлые эффекты, медленный телефон). Звук при этом
+            // льётся ровно через Web Audio, поэтому в готовом файле получается ровный звук и
+            // "дёргающееся" видео — кадры ловятся то чаще, то реже.
+            // Чиним: captureStream(0) — "ручной" режим, кадр кладётся в запись ТОЛЬКО когда мы
+            // сами вызываем track.requestFrame(). Делаем это строго по таймеру (setInterval) —
+            // отдельно от рендера. Даже если отрисовка кадра где-то подзависнет, в запись всё
+            // равно попадают кадры через равные промежутки времени — видео получается плавным.
+            const videoStream = exportCanvas.captureStream(0);
+            const videoTrack = videoStream.getVideoTracks()[0];
             const combined = new MediaStream([...videoStream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
             let recorder;
             try { recorder = new MediaRecorder(combined, { mimeType: mime, videoBitsPerSecond: 4500000 }); }
@@ -2108,6 +2118,9 @@
 
             state.currentTime = 0; state.playing = true; lastFrameTs = null;
             recorder.start(250);
+            // Таймер, который кладёт текущий кадр canvas в запись строго каждые 1000/fps мс —
+            // независимо от того, как часто реально успевает перерисоваться сцена.
+            const captureTimer = setInterval(() => { try { videoTrack.requestFrame(); } catch (e) { } }, 1000 / fps);
             const totalDur = state.duration;
 
             await new Promise(resolve => {
@@ -2119,7 +2132,9 @@
                     fill.style.width = (p * 100).toFixed(0) + '%'; pct.textContent = (p * 100).toFixed(0) + '%';
                     if (state.currentTime >= totalDur) {
                         renderFrame(totalDur); ectx.clearRect(0, 0, outW, outH); ectx.fillStyle = state.bgColor; ectx.fillRect(0, 0, outW, outH); ectx.drawImage(stage, 0, 0, outW, outH);
-                        state.playing = false; setTimeout(() => recorder.stop(), 200); resolve(); return;
+                        state.playing = false;
+                        setTimeout(() => { clearInterval(captureTimer); recorder.stop(); }, 200);
+                        resolve(); return;
                     }
                     renderFrame(state.currentTime);
                     ectx.clearRect(0, 0, outW, outH); ectx.fillStyle = state.bgColor; ectx.fillRect(0, 0, outW, outH); ectx.drawImage(stage, 0, 0, outW, outH);
@@ -2129,6 +2144,7 @@
             });
 
             await new Promise(r => { recorder.onstop = r; });
+            clearInterval(captureTimer); // на всякий случай, если остановка пошла не по основному пути
             if (recorderErr) throw (recorderErr instanceof Error ? recorderErr : new Error('Ошибка MediaRecorder'));
             if (!chunks.length) throw new Error('Запись пустая — ни одного кадра не сохранилось');
 

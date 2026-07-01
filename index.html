@@ -409,13 +409,13 @@
             position: absolute;
             top: 1px;
             right: 1px;
-            width: 22px;
-            height: 22px;
-            border-radius: 6px;
-            background: rgba(0, 0, 0, .45);
-            border: 1px solid rgba(255, 255, 255, .25);
+            width: 30px;
+            height: 30px;
+            border-radius: 7px;
+            background: rgba(0, 0, 0, .55);
+            border: 1px solid rgba(255, 255, 255, .35);
             color: #fff;
-            font-size: 12px;
+            font-size: 16px;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -859,6 +859,50 @@
             display: flex;
         }
 
+        #btnStopSubs {
+            position: fixed;
+            top: 12px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 3500;
+            background: var(--danger);
+            border: none;
+            color: #fff;
+            padding: 0 18px;
+            height: 44px;
+            border-radius: 22px;
+            font-size: 13.5px;
+            font-weight: 600;
+            display: none;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 6px 20px rgba(0, 0, 0, .5);
+        }
+
+        #btnStopSubs.show {
+            display: flex;
+        }
+
+        #btnStopSubs .dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            background: #fff;
+            animation: dotpulse 1s infinite;
+        }
+
+        @keyframes dotpulse {
+
+            0%,
+            100% {
+                opacity: 1
+            }
+
+            50% {
+                opacity: .3
+            }
+        }
+
         body.theme-light {
             --bg: #eef0f4;
             --bg2: #fff;
@@ -930,6 +974,7 @@
     </div>
 
     <button id="btnExitFS">✕ Выйти</button>
+    <button id="btnStopSubs"><span class="dot"></span> Остановить субтитры</button>
     <input type="file" id="fileInputMain" multiple accept="video/*,image/*" class="hidden">
     <input type="file" id="fileInputAudio" accept="audio/*" class="hidden">
     <input type="file" id="fileInputSticker" accept="image/*" class="hidden">
@@ -976,6 +1021,7 @@
             { type: 'audio', name: 'Звук', icon: '🎵' },
             { type: 'overlay', name: 'Текст', icon: '🔤' },
         ];
+        const RATIOS = ['16:9', '9:16', '1:1', '4:5'];
         const state = {
             canvasW: 1280, canvasH: 720, ratio: '16:9', bgColor: '#000000', bgMode: 'blur',
             tracks: TRACK_DEFS.map(d => ({ id: uid(), type: d.type, name: d.name, clips: [] })),
@@ -1180,7 +1226,7 @@
         }
         function quickAdd(lib) {
             const kind = lib.kind === 'video' ? 'video' : lib.kind === 'audio' ? 'music' : 'photo';
-            const clip = makeClip(kind, { mediaId: lib.id, name: lib.name, dur: kind === 'photo' ? 5 : Math.min(lib.duration, 30), sourceDur: lib.duration, el: lib.el });
+            const clip = makeClip(kind, { mediaId: lib.id, name: lib.name, dur: kind === 'photo' ? 5 : lib.duration, sourceDur: lib.duration, el: lib.el });
             addClipToTrack(clip, state.currentTime);
             closeSheet();
         }
@@ -1931,7 +1977,7 @@
             const items = [
                 ['🎨', 'Авто-цвет выбранного клипа', () => { const f = findClip(state.selectedClipId); if (!f) { toast('Выберите клип', true); return; } aiAutoColorCorrect(f.clip); closeSheet(); }],
                 ['✂️', 'Авторазрез по сценам', () => { closeSheet(); aiAutoCutByScenes(); }],
-                ['💬', 'Живые субтитры', () => { closeSheet(); aiLiveSubtitles(); }],
+                ['💬', activeSpeechRec ? 'Остановить субтитры' : 'Живые субтитры', () => { closeSheet(); aiLiveSubtitles(); }],
             ];
             items.forEach(([ic, label, fn]) => { const b = document.createElement('button'); b.className = 'chip'; b.style.cssText = 'width:100%;justify-content:flex-start;height:50px;margin-bottom:10px;gap:10px;font-size:14px'; b.innerHTML = `<span style="font-size:18px">${ic}</span>${label}`; b.onclick = fn; body.appendChild(b); });
         });
@@ -1948,16 +1994,35 @@
             pushHistory(); renderFrame(state.currentTime); toast('Цвет скорректирован');
         }
         let activeSpeechRec = null;
+        function updateSubtitleIndicator() {
+            const btn = $('#btnStopSubs');
+            if (activeSpeechRec) btn.classList.add('show'); else btn.classList.remove('show');
+        }
         function aiLiveSubtitles() {
-            if (activeSpeechRec) { activeSpeechRec.stop(); activeSpeechRec = null; toast('Субтитры остановлены'); return; }
+            // Остановка: снимаем обработчики ПЕРЕД stop(), чтобы асинхронный onend
+            // не смог перезапустить распознавание после того, как пользователь нажал "стоп" —
+            // именно из-за гонки (onend срабатывает позже, чем мы обнуляем переменную)
+            // раньше субтитры иногда невозможно было остановить.
+            if (activeSpeechRec) {
+                const rec = activeSpeechRec; activeSpeechRec = null;
+                rec.onend = null; rec.onresult = null; rec.onerror = null;
+                try { rec.stop(); } catch (e) { }
+                try { rec.abort(); } catch (e) { }
+                toast('Субтитры остановлены');
+                updateSubtitleIndicator();
+                return;
+            }
             const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
             if (!SR) { toast('Не поддерживается в этом браузере', true); return; }
             const rec = new SR(); rec.lang = 'ru-RU'; rec.continuous = true; rec.interimResults = false;
             rec.onresult = e => { const text = e.results[e.results.length - 1][0].transcript; const clip = makeClip('text', { dur: 2.5, text }); addClipToTrack(clip, state.currentTime); };
-            rec.onerror = e => toast('Ошибка распознавания', true);
+            rec.onerror = e => { if (e.error !== 'no-speech') toast('Ошибка распознавания', true); };
             rec.onend = () => { if (activeSpeechRec === rec) { try { rec.start(); } catch (e) { } } };
-            rec.start(); activeSpeechRec = rec; toast('Говорите…');
+            try { rec.start(); } catch (e) { toast('Не удалось запустить микрофон', true); return; }
+            activeSpeechRec = rec; toast('Говорите… Нажмите красную кнопку сверху, чтобы остановить');
+            updateSubtitleIndicator();
         }
+        $('#btnStopSubs').onclick = () => aiLiveSubtitles();
         async function aiAutoCutByScenes() {
             const f = findClip(state.selectedClipId);
             if (!f || f.clip.kind !== 'video') { toast('Выберите видеоклип', true); return; }
@@ -2178,10 +2243,18 @@
             const blobType = mime.split(';')[0]; // 'video/mp4' или 'video/webm', без codecs=...
             const blob = new Blob(chunks, { type: blobType });
             const url = URL.createObjectURL(blob);
-            const a = document.createElement('a'); a.href = url; a.download = 'video.' + ext; a.click();
+            const a = document.createElement('a'); a.href = url; a.download = 'video.' + ext; a.style.display = 'none';
+            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+            // ВАЖНО: раньше ссылка на скачивание нигде не хранилась и объект URL не отзывался —
+            // на части Android-браузеров (особенно если download-ссылка не распознаётся) вкладка
+            // вместо сохранения файла НАВИГИРУЕТ на blob: и начинает ПРОИГРЫВАТЬ готовое видео
+            // прямо в браузере — маме кажется, что "нажал на кнопку — и видео просто запустилось".
+            // Отзываем URL через небольшую паузу (чтобы скачивание успело начаться) — так вкладка
+            // никогда не остаётся на плеере, только сохраняет файл.
+            setTimeout(() => { try { URL.revokeObjectURL(url); } catch (e) { } }, 4000);
             overlay.classList.add('hidden');
             isExporting = false;
-            toast('Готово! Видео сохранено ✅');
+            toast('Готово! Видео сохранено в Загрузки ✅');
             if (wasPlaying) startPlayback();
         }
 

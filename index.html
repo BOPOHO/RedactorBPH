@@ -2136,6 +2136,21 @@
                 });
             });
         };
+        // Ждём, пока видео реально доедет до нужного кадра (событие 'seeked'), вместо того чтобы
+        // просто поставить currentTime и надеяться, что к следующему кадру всё готово. На слабых
+        // телефонах декодирование кадра занимает время — без ожидания в запись улетает СТАРЫЙ кадр.
+        function seekAndWait(el, target, timeoutMs = 500) {
+            return new Promise(resolve => {
+                let done = false;
+                const finish = () => { if (done) return; done = true; try { el.removeEventListener('seeked', onSeek); } catch (e) { } clearTimeout(timer); resolve(); };
+                const onSeek = () => finish();
+                el.addEventListener('seeked', onSeek);
+                const timer = setTimeout(finish, timeoutMs);
+                try {
+                    if (typeof el.fastSeek === 'function') el.fastSeek(target); else el.currentTime = target;
+                } catch (e) { finish(); }
+            });
+        }
         async function runExport({ mime, ext }, targetHeight) {
             isExporting = true;
             const overlay = $('#exportOverlay'); overlay.classList.remove('hidden');
@@ -2147,11 +2162,13 @@
             const projRatio = state.canvasW / state.canvasH;
             let outH = targetHeight || 720, outW = Math.round(outH * projRatio);
             if (projRatio < 1) { outW = targetHeight || 720; outH = Math.round(outW / projRatio); } // вертикальное видео: ограничиваем по ширине
+            outW -= outW % 2; outH -= outH % 2; // чётная ширина/высота — важно для некоторых encoder'ов
             const exportCanvas = document.createElement('canvas'); exportCanvas.width = outW; exportCanvas.height = outH;
-            const ectx = exportCanvas.getContext('2d');
+            const ectx = exportCanvas.getContext('2d', { alpha: false });
 
             const wasPlaying = state.playing; stopPlayback();
             const dest = audioCtxMain.createMediaStreamDestination();
+            const connectedGains = []; // чтобы отключить именно ЭТУ ветку записи после экспорта (см. ниже)
 
             // ВАЖНО: audioCtxMain.createMediaElementSource(el) можно вызвать на одном и том же
             // <video>/<audio> элементе только ОДИН РАЗ за всё время жизни страницы — после этого
@@ -2177,28 +2194,39 @@
                             mediaSourceByEl.set(c.el, node);
                         }
                         node.gain.connect(dest); // плюс отдельная ветка на запись для текущего экспорта
+                        connectedGains.push(node.gain);
                     } catch (e) { console.warn('Не удалось подключить аудио-источник клипа', c.name, e); }
                 }
             }));
 
-            const fps = 24;
-            // ВАЖНО: captureStream(fps) в "автоматическом" режиме отдаёт кадр в запись каждый раз,
-            // когда меняется содержимое canvas — а это происходит НЕРАВНОМЕРНО, если рендер не
-            // успевает за реальным временем (тяжёлые эффекты, медленный телефон). Звук при этом
-            // льётся ровно через Web Audio, поэтому в готовом файле получается ровный звук и
-            // "дёргающееся" видео — кадры ловятся то чаще, то реже.
-            // Чиним: captureStream(0) — "ручной" режим, кадр кладётся в запись ТОЛЬКО когда мы
-            // сами вызываем track.requestFrame(). Делаем это строго по таймеру (setInterval) —
-            // отдельно от рендера. Даже если отрисовка кадра где-то подзависнет, в запись всё
-            // равно попадают кадры через равные промежутки времени — видео получается плавным.
-            const videoStream = exportCanvas.captureStream(0);
+            // ГЛАВНАЯ ПРИЧИНА "видео на 4 сек вместо 16" И рассинхрона звука/картинки:
+            // раньше виртуальное время экспорта (state.currentTime) считалось как сумма РЕАЛЬНЫХ
+            // дельт между кадрами requestAnimationFrame. На слабом телефоне отрисовка одного кадра
+            // (эффекты, decode видео, getImageData) иногда занимает 300-1000мс вместо ожидаемых ~16мс.
+            // Каждая такая "тормознутая" итерация добавляла к state.currentTime СРАЗУ секунду и
+            // больше — в итоге 16-секундный таймлайн "проматывался" за несколько реальных секунд,
+            // видео при этом реально успевало отрендерить только начало ролика, а звук, попавший
+            // в запись, шёл с нормальной скоростью — итог: видео и звук совершенно расходились,
+            // а итоговый файл обрывался на пары секунд раньше положенного.
+            //
+            // Исправление: время экспорта теперь берётся НАПРЯМУЮ из аппаратных часов Web Audio
+            // (audioCtxMain.currentTime) — это тот же самый источник времени, который использует
+            // звук, попадающий в запись. Картинка каждый кадр рисуется под ТЕКУЩЕЕ звуковое время,
+            // поэтому рассинхрон физически невозможен — оба потока всегда читают один и тот же
+            // хронометр. На медленном телефоне рендер отстающих кадров теперь просто "подтягивается"
+            // к реальному звуку, а не улетает вперёд — итоговая длина видео ВСЕГДА равна длине
+            // таймлайна, даже если сам процесс экспорта займёт больше реального времени.
+            const videoStream = exportCanvas.captureStream(0); // captureStream(0) = кадр кладём в запись вручную
             const videoTrack = videoStream.getVideoTracks()[0];
             const combined = new MediaStream([...videoStream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
+            const bitrateByHeight = { 480: 2500000, 720: 4500000, 1080: 8000000 };
+            const videoBitsPerSecond = bitrateByHeight[targetHeight] || 4500000;
             let recorder;
-            try { recorder = new MediaRecorder(combined, { mimeType: mime, videoBitsPerSecond: 4500000 }); }
+            try { recorder = new MediaRecorder(combined, { mimeType: mime, videoBitsPerSecond, audioBitsPerSecond: 160000 }); }
             catch (e) {
                 try { recorder = new MediaRecorder(combined, { mimeType: mime }); }
                 catch (e2) {
+                    connectedGains.forEach(g => { try { g.disconnect(dest); } catch (e3) { } });
                     overlay.classList.add('hidden'); isExporting = false;
                     if (wasPlaying) startPlayback();
                     throw e2;
@@ -2208,35 +2236,54 @@
             recorder.onerror = e => { recorderErr = e.error || e; };
             const chunks = []; recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
 
-            state.currentTime = 0; state.playing = true; lastFrameTs = null;
-            recorder.start(250);
-            // Таймер, который кладёт текущий кадр canvas в запись строго каждые 1000/fps мс —
-            // независимо от того, как часто реально успевает перерисоваться сцена.
-            const captureTimer = setInterval(() => { try { videoTrack.requestFrame(); } catch (e) { } }, 1000 / fps);
             const totalDur = state.duration;
 
+            // Готовим самый первый кадр ДО старта записи: доводим все активные в t=0 клипы до
+            // нужной позиции и ждём реального 'seeked', иначе в запись может попасть кадр от
+            // предыдущего положения плейхеда (или чёрный экран на первые доли секунды).
+            state.currentTime = 0; state.playing = true;
+            const initialClips = activeClipsAt(0).filter(en => en.clip.el && (en.clip.kind === 'video' || en.clip.kind === 'music' || en.clip.kind === 'voice'));
+            await Promise.all(initialClips.map(en => seekAndWait(en.clip.el, localTimeFor(en.clip, 0))));
+            renderFrame(0);
+            ectx.clearRect(0, 0, outW, outH); ectx.fillStyle = state.bgColor; ectx.fillRect(0, 0, outW, outH); ectx.drawImage(stage, 0, 0, outW, outH);
+            try { videoTrack.requestFrame(); } catch (e) { }
+
+            recorder.start(500);
+            const startAudioTime = audioCtxMain.currentTime;
+            const targetFrameGap = 1 / 30; // не чаще ~30 кадров/сек кладём в запись — экономит CPU без потери плавности
+            let lastPushedAt = -1;
+
             await new Promise(resolve => {
-                function exportTick(ts) {
-                    if (lastFrameTs == null) lastFrameTs = ts;
-                    const dt = (ts - lastFrameTs) / 1000; lastFrameTs = ts;
-                    state.currentTime += dt;
-                    const p = clamp(state.currentTime / totalDur, 0, 1);
+                function exportTick() {
+                    // Время всегда читаем из аппаратных часов Web Audio — оно течёт РОВНО с той же
+                    // скоростью, с какой реально звучит (и пишется) аудио, что бы ни происходило
+                    // на главном потоке с отрисовкой.
+                    const elapsed = audioCtxMain.currentTime - startAudioTime;
+                    const clampedT = Math.min(elapsed, totalDur);
+                    state.currentTime = clampedT;
+                    const p = clamp(clampedT / totalDur, 0, 1);
                     fill.style.width = (p * 100).toFixed(0) + '%'; pct.textContent = (p * 100).toFixed(0) + '%';
-                    if (state.currentTime >= totalDur) {
-                        renderFrame(totalDur); ectx.clearRect(0, 0, outW, outH); ectx.fillStyle = state.bgColor; ectx.fillRect(0, 0, outW, outH); ectx.drawImage(stage, 0, 0, outW, outH);
+
+                    renderFrame(clampedT);
+                    ectx.clearRect(0, 0, outW, outH); ectx.fillStyle = state.bgColor; ectx.fillRect(0, 0, outW, outH); ectx.drawImage(stage, 0, 0, outW, outH);
+                    if (elapsed - lastPushedAt >= targetFrameGap || clampedT >= totalDur) {
+                        try { videoTrack.requestFrame(); } catch (e) { }
+                        lastPushedAt = elapsed;
+                    }
+
+                    if (elapsed >= totalDur) {
                         state.playing = false;
-                        setTimeout(() => { clearInterval(captureTimer); recorder.stop(); }, 200);
+                        // небольшой хвост, чтобы последний кусочек звука успел долиться в поток записи
+                        setTimeout(() => { recorder.stop(); }, 300);
                         resolve(); return;
                     }
-                    renderFrame(state.currentTime);
-                    ectx.clearRect(0, 0, outW, outH); ectx.fillStyle = state.bgColor; ectx.fillRect(0, 0, outW, outH); ectx.drawImage(stage, 0, 0, outW, outH);
                     requestAnimationFrame(exportTick);
                 }
                 requestAnimationFrame(exportTick);
             });
 
             await new Promise(r => { recorder.onstop = r; });
-            clearInterval(captureTimer); // на всякий случай, если остановка пошла не по основному пути
+            connectedGains.forEach(g => { try { g.disconnect(dest); } catch (e) { } }); // не держим звук подключенным к уже ненужному потоку записи
             if (recorderErr) throw (recorderErr instanceof Error ? recorderErr : new Error('Ошибка MediaRecorder'));
             if (!chunks.length) throw new Error('Запись пустая — ни одного кадра не сохранилось');
 

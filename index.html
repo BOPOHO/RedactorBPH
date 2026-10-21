@@ -297,13 +297,9 @@
     <div><label>Длительность фото по умолчанию</label><div class="sub" id="def-dur-sub">2.5 сек</div></div>
     <input type="range" class="mini" id="def-dur" min="0.5" max="8" step="0.1" value="2.5">
   </div>
-  <div class="row">
-    <label>Переход между кадрами</label>
-    <div class="chip-row" id="transition-chips">
-      <div class="chip active" data-v="fade">Плавно</div>
-      <div class="chip" data-v="slide">Слайд</div>
-      <div class="chip" data-v="cut">Жёсткая склейка</div>
-    </div>
+  <div class="row" style="flex-direction:column; align-items:stretch;">
+    <label style="margin-bottom:8px;">Переход между кадрами</label>
+    <div class="chip-row" id="transition-chips"></div>
   </div>
   <div class="row">
     <label>Качество экспорта</label>
@@ -350,7 +346,22 @@ const state = {
   playing: false,
 };
 
-const TRANS_DUR = {fade:0.4, slide:0.4, cut:0};
+const TRANSITIONS = {
+  cut:      {name:"Без перехода", dur:0},
+  fade:     {name:"Плавно",      dur:0.45},
+  dissolve: {name:"Растворение", dur:0.6},
+  slideL:   {name:"Слайд ←",     dur:0.4},
+  slideR:   {name:"Слайд →",     dur:0.4},
+  slideUp:  {name:"Слайд ↑",     dur:0.4},
+  slideDown:{name:"Слайд ↓",     dur:0.4},
+  zoomIn:   {name:"Зум+",        dur:0.45},
+  zoomOut:  {name:"Зум-",        dur:0.45},
+  wipeCircle:{name:"Круг",       dur:0.5},
+  wipeV:    {name:"Шторка",      dur:0.4},
+  blur:     {name:"Блюр",        dur:0.5},
+  spin:     {name:"Поворот",     dur:0.5},
+};
+const TRANS_DUR = Object.fromEntries(Object.entries(TRANSITIONS).map(([k,v])=>[k,v.dur]));
 const FILTERS = [
   {id:"none", name:"Ориг.", css:"none"},
   {id:"vivid", name:"Сочно", css:"saturate(1.5) contrast(1.08)"},
@@ -718,10 +729,20 @@ $("sheet-backdrop").addEventListener("click", hideSheets);
 document.querySelectorAll("[data-close]").forEach(b=>b.addEventListener("click", hideSheets));
 $("btn-settings").addEventListener("click", ()=>showSheet("sheet-settings"));
 
-document.querySelectorAll("#transition-chips .chip").forEach(chip=>chip.addEventListener("click", ()=>{
-  document.querySelectorAll("#transition-chips .chip").forEach(c=>c.classList.remove("active"));
-  chip.classList.add("active"); state.transition = chip.dataset.v; updateMeta();
-}));
+(function buildTransitionChips(){
+  const wrap = $("transition-chips");
+  Object.entries(TRANSITIONS).forEach(([key,t])=>{
+    const chip = document.createElement("div");
+    chip.className = "chip"+(key===state.transition?" active":"");
+    chip.dataset.v = key; chip.textContent = t.name;
+    chip.addEventListener("click", ()=>{
+      wrap.querySelectorAll(".chip").forEach(c=>c.classList.remove("active"));
+      chip.classList.add("active");
+      state.transition = key; updateMeta(); renderStageFrame(currentPreviewTime());
+    });
+    wrap.appendChild(chip);
+  });
+})();
 document.querySelectorAll("#quality-chips .chip").forEach(chip=>chip.addEventListener("click", ()=>{
   document.querySelectorAll("#quality-chips .chip").forEach(c=>c.classList.remove("active"));
   chip.classList.add("active"); state.quality = chip.dataset.v; updateMeta();
@@ -783,28 +804,125 @@ function drawClipFrame(targetCtx,w,h,c,localT){
     drawImageCover(targetCtx,w,h,c.videoEl,c.videoEl.videoWidth,c.videoEl.videoHeight,0,null,filterCss);
   }
 }
+// easing for smoother blends
+function ease(t){ return t<0.5 ? 2*t*t : 1-Math.pow(-2*t+2,2)/2; }
+
+function renderTransition(targetCtx,w,h,type,rawBlend,c,localT,next){
+  const blend = ease(Math.max(0,Math.min(1,rawBlend)));
+  switch(type){
+    case "fade":
+      targetCtx.globalAlpha=1; drawClipFrame(targetCtx,w,h,c,localT);
+      targetCtx.globalAlpha=blend; drawClipFrame(targetCtx,w,h,next,0);
+      targetCtx.globalAlpha=1;
+      break;
+    case "dissolve":{
+      // slightly scaled + crossfade for a softer "melt"
+      targetCtx.globalAlpha=1; drawClipFrame(targetCtx,w,h,c,localT);
+      targetCtx.save(); targetCtx.globalAlpha=blend;
+      targetCtx.translate(w/2,h/2); targetCtx.scale(1+blend*0.04,1+blend*0.04); targetCtx.translate(-w/2,-h/2);
+      drawClipFrame(targetCtx,w,h,next,0);
+      targetCtx.restore(); targetCtx.globalAlpha=1;
+      break;
+    }
+    case "slideL":
+      targetCtx.save(); targetCtx.beginPath(); targetCtx.rect(0,0,w,h); targetCtx.clip();
+      targetCtx.translate(-blend*w,0); drawClipFrame(targetCtx,w,h,c,localT); targetCtx.restore();
+      targetCtx.save(); targetCtx.beginPath(); targetCtx.rect(0,0,w,h); targetCtx.clip();
+      targetCtx.translate(w-blend*w,0); drawClipFrame(targetCtx,w,h,next,0); targetCtx.restore();
+      break;
+    case "slideR":
+      targetCtx.save(); targetCtx.beginPath(); targetCtx.rect(0,0,w,h); targetCtx.clip();
+      targetCtx.translate(blend*w,0); drawClipFrame(targetCtx,w,h,c,localT); targetCtx.restore();
+      targetCtx.save(); targetCtx.beginPath(); targetCtx.rect(0,0,w,h); targetCtx.clip();
+      targetCtx.translate(-w+blend*w,0); drawClipFrame(targetCtx,w,h,next,0); targetCtx.restore();
+      break;
+    case "slideUp":
+      targetCtx.save(); targetCtx.beginPath(); targetCtx.rect(0,0,w,h); targetCtx.clip();
+      targetCtx.translate(0,-blend*h); drawClipFrame(targetCtx,w,h,c,localT); targetCtx.restore();
+      targetCtx.save(); targetCtx.beginPath(); targetCtx.rect(0,0,w,h); targetCtx.clip();
+      targetCtx.translate(0,h-blend*h); drawClipFrame(targetCtx,w,h,next,0); targetCtx.restore();
+      break;
+    case "slideDown":
+      targetCtx.save(); targetCtx.beginPath(); targetCtx.rect(0,0,w,h); targetCtx.clip();
+      targetCtx.translate(0,blend*h); drawClipFrame(targetCtx,w,h,c,localT); targetCtx.restore();
+      targetCtx.save(); targetCtx.beginPath(); targetCtx.rect(0,0,w,h); targetCtx.clip();
+      targetCtx.translate(0,-h+blend*h); drawClipFrame(targetCtx,w,h,next,0); targetCtx.restore();
+      break;
+    case "zoomIn":
+      targetCtx.globalAlpha=1; drawClipFrame(targetCtx,w,h,c,localT);
+      targetCtx.save(); targetCtx.globalAlpha=blend;
+      const s1 = 1.35-blend*0.35;
+      targetCtx.translate(w/2,h/2); targetCtx.scale(s1,s1); targetCtx.translate(-w/2,-h/2);
+      drawClipFrame(targetCtx,w,h,next,0);
+      targetCtx.restore(); targetCtx.globalAlpha=1;
+      break;
+    case "zoomOut":{
+      targetCtx.save();
+      const s2 = 1+blend*0.3;
+      targetCtx.translate(w/2,h/2); targetCtx.scale(s2,s2); targetCtx.translate(-w/2,-h/2);
+      targetCtx.globalAlpha=1-blend;
+      drawClipFrame(targetCtx,w,h,c,localT);
+      targetCtx.restore();
+      targetCtx.globalAlpha=blend; drawClipFrame(targetCtx,w,h,next,0); targetCtx.globalAlpha=1;
+      break;
+    }
+    case "wipeCircle":{
+      targetCtx.globalAlpha=1; drawClipFrame(targetCtx,w,h,c,localT);
+      const maxR = Math.hypot(w,h)/2*1.05;
+      targetCtx.save(); targetCtx.beginPath();
+      targetCtx.arc(w/2,h/2, blend*maxR, 0, Math.PI*2); targetCtx.clip();
+      drawClipFrame(targetCtx,w,h,next,0);
+      targetCtx.restore();
+      break;
+    }
+    case "wipeV":{
+      targetCtx.globalAlpha=1; drawClipFrame(targetCtx,w,h,c,localT);
+      targetCtx.save(); targetCtx.beginPath();
+      const cw = blend*w;
+      targetCtx.rect(w/2-cw/2,0,cw,h); targetCtx.clip();
+      drawClipFrame(targetCtx,w,h,next,0);
+      targetCtx.restore();
+      break;
+    }
+    case "blur":{
+      targetCtx.save(); targetCtx.filter = `blur(${(blend*14)}px)`;
+      targetCtx.globalAlpha = 1-blend*0.3;
+      drawClipFrame(targetCtx,w,h,c,localT);
+      targetCtx.restore();
+      targetCtx.save(); targetCtx.filter = `blur(${((1-blend)*14)}px)`;
+      targetCtx.globalAlpha = blend;
+      drawClipFrame(targetCtx,w,h,next,0);
+      targetCtx.restore(); targetCtx.globalAlpha=1;
+      break;
+    }
+    case "spin":{
+      targetCtx.globalAlpha=1-blend;
+      targetCtx.save(); targetCtx.translate(w/2,h/2); targetCtx.rotate(blend*0.35); targetCtx.scale(1-blend*0.15,1-blend*0.15); targetCtx.translate(-w/2,-h/2);
+      drawClipFrame(targetCtx,w,h,c,localT); targetCtx.restore();
+      targetCtx.globalAlpha=blend;
+      targetCtx.save(); targetCtx.translate(w/2,h/2); targetCtx.rotate((blend-1)*0.35); targetCtx.scale(0.85+blend*0.15,0.85+blend*0.15); targetCtx.translate(-w/2,-h/2);
+      drawClipFrame(targetCtx,w,h,next,0); targetCtx.restore();
+      targetCtx.globalAlpha=1;
+      break;
+    }
+    default:
+      drawClipFrame(targetCtx,w,h,c,localT);
+  }
+}
+
 function composeFrame(targetCtx,w,h,time){
   targetCtx.fillStyle="#000"; targetCtx.fillRect(0,0,w,h);
   if(!state.clips.length) return;
-  const transDur = TRANS_DUR[state.transition];
   let acc=0;
   for(let i=0;i<state.clips.length;i++){
     const c = state.clips[i]; const d = clipDuration(c);
+    const transDur = TRANS_DUR[state.transition];
     const start=acc, end=acc+d, nextStart=end-transDur;
     if(time>=start && time<end){
       const localT = Math.min(d, Math.max(0, time-start));
       if(transDur>0 && i<state.clips.length-1 && time>=nextStart){
         const blend=(time-nextStart)/transDur, next=state.clips[i+1];
-        if(state.transition==="fade"){
-          targetCtx.globalAlpha=1; drawClipFrame(targetCtx,w,h,c,localT);
-          targetCtx.globalAlpha=blend; drawClipFrame(targetCtx,w,h,next,0);
-          targetCtx.globalAlpha=1;
-        } else {
-          targetCtx.save(); targetCtx.beginPath(); targetCtx.rect(0,0,w,h); targetCtx.clip();
-          targetCtx.translate(-blend*w,0); drawClipFrame(targetCtx,w,h,c,localT); targetCtx.restore();
-          targetCtx.save(); targetCtx.beginPath(); targetCtx.rect(0,0,w,h); targetCtx.clip();
-          targetCtx.translate(w-blend*w,0); drawClipFrame(targetCtx,w,h,next,0); targetCtx.restore();
-        }
+        renderTransition(targetCtx,w,h, state.transition, blend, c, localT, next);
       } else {
         drawClipFrame(targetCtx,w,h,c,localT);
       }
